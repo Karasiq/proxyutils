@@ -5,11 +5,10 @@ import java.nio.channels.SocketChannel
 
 import akka.util.ByteString
 import com.karasiq.networkutils.SocketChannelWrapper._
-import com.karasiq.networkutils.http.headers.`Proxy-Authorization`
+import com.karasiq.networkutils.http.headers.{HttpHeader, `Proxy-Authorization`}
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.http.{HttpConnect, HttpResponse}
-import com.karasiq.parsers.socks.SocksClient.SocksVersion
-import com.karasiq.parsers.socks.SocksClient.SocksVersion.SocksV5
+import com.karasiq.parsers.socks.SocksClient.SocksVersion, SocksVersion._
 import com.karasiq.parsers.socks.{SocksClient, SocksServer}
 
 import scala.language.implicitConversions
@@ -20,25 +19,23 @@ abstract class ProxyConnector {
 }
 
 object ProxyConnector {
-  def apply(protocol: String): ProxyConnector = protocol match {
-    case "socks" | "socks5" ⇒ new SocksProxyConnector(SocksV5)
-    case "http" | "https" ⇒ new HttpProxyConnector
-    case p ⇒ throw new IllegalArgumentException(s"Proxy protocol not supported: $p")
-  }
-
-  def apply(proxy: Proxy): ProxyConnector = proxy.scheme match {
-    case "socks" | "socks5" ⇒ new SocksProxyConnector(SocksVersion.SocksV5, proxy)
-    case "socks4" ⇒ new SocksProxyConnector(SocksVersion.SocksV4, proxy)
+  def apply(protocol: String, proxy: Option[Proxy] = None): ProxyConnector = protocol match {
+    case "socks" | "socks5" ⇒ new SocksProxyConnector(SocksV5, proxy)
+    case "socks4" ⇒ new SocksProxyConnector(SocksV4, proxy)
     case "http" | "https" | "" ⇒ new HttpProxyConnector(proxy)
     case p ⇒ throw new IllegalArgumentException(s"Proxy protocol not supported: $p")
   }
+
+  def apply(proxy: Proxy): ProxyConnector = {
+    require(proxy != null, "Invalid proxy")
+    apply(proxy.scheme, Some(proxy))
+  }
 }
 
-class HttpProxyConnector(proxy: Proxy = null) extends ProxyConnector {
-
+class HttpProxyConnector(proxy: Option[Proxy] = None) extends ProxyConnector {
   @throws[ProxyException]("if connection failed")
   override def connect(socket: SocketChannel, destination: InetSocketAddress): Unit = {
-    val auth = if (proxy != null && proxy.userInfo.nonEmpty) Seq(`Proxy-Authorization`.basic(proxy.userInfo.get)) else Nil
+    val auth: Seq[HttpHeader] = proxy.flatMap(_.userInfo).map(userInfo ⇒ `Proxy-Authorization`.basic(userInfo)).toSeq
     socket.writeRead(HttpConnect(destination, auth)) match {
       case HttpResponse((status, headers)) ⇒
         if (status.code != 200) throw new ProxyException(s"HTTP CONNECT failed: ${status.code} ${status.message}")
@@ -49,14 +46,14 @@ class HttpProxyConnector(proxy: Proxy = null) extends ProxyConnector {
   }
 }
 
-class SocksProxyConnector(version: SocksVersion, proxy: Proxy = null) extends ProxyConnector {
+class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) extends ProxyConnector {
   import SocksClient._
   import SocksServer._
 
   private def authInfo: (String, String) = {
-    proxy.userInfo.map(_.split(":", 2).toList) match {
-      case Some(u :: p :: Nil) ⇒
-        u → p
+    proxy.flatMap(_.userInfo).map(_.split(":", 2).toList) match {
+      case Some(userName :: password :: Nil) ⇒
+        userName → password
 
       case _ ⇒
         "" → ""
@@ -67,7 +64,7 @@ class SocksProxyConnector(version: SocksVersion, proxy: Proxy = null) extends Pr
     case AuthMethod.NoAuth ⇒
       // Pass
 
-    case AuthMethod.UsernamePassword if proxy != null && proxy.userInfo.isDefined ⇒
+    case AuthMethod.UsernamePassword if proxy.exists(_.userInfo.isDefined) ⇒
       val (userName, password) = authInfo
       socket.writeRead(UsernameAuthRequest((userName, password))) match {
         case AuthStatusResponse(0x00) ⇒
