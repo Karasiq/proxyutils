@@ -85,7 +85,7 @@ private[socks] object Address {
     }
 
     override def fromBytes: PartialFunction[Seq[Byte], (InetSocketAddress, Seq[Byte])] = {
-      case Port(port, 0x00 :: 0x00 :: 0x00 :: last :: (rest @ NullTerminatedString(_, NullTerminatedString(domain, _)))) if last != 0x00 ⇒ // SOCKS4A
+      case Port(port, Socks4AInvalidIP(_, rest @ NullTerminatedString(_, NullTerminatedString(domain, _)))) ⇒ // SOCKS4A
         InetSocketAddress.createUnresolved(domain, port) → rest
 
       case Port(port, IPv4(address, rest)) ⇒ // SOCKS4

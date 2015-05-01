@@ -8,6 +8,7 @@ import com.karasiq.proxy.{ProxyConnector, ProxyException}
 import com.typesafe.config.Config
 import org.apache.commons.io.IOUtils
 
+import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.Random
 import scala.util.control.Exception
@@ -94,6 +95,18 @@ sealed private class ProxyChainImpl(val proxies: Seq[Proxy]) extends ProxyChain 
     ProxyConnector(proxy).connect(socket, destination)
   }
 
+  private def tryConnect(socket: SocketChannel, proxy: Proxy, address: InetSocketAddress): SocketChannel = {
+    val catcher = Exception.nonFatalCatch.withApply { exc ⇒
+      IOUtils.closeQuietly(socket)
+      throw new ProxyException(s"Connect through $proxy to $address failed", exc)
+    }
+
+    catcher {
+      connect(socket, proxy, address)
+      socket
+    }
+  }
+
   /**
    * Creates connection through proxy chain
    * @param address Destination address
@@ -101,30 +114,27 @@ sealed private class ProxyChainImpl(val proxies: Seq[Proxy]) extends ProxyChain 
    */
   @throws[ProxyException]("if connection failed")
   def connection(address: InetSocketAddress): SocketChannel = {
-    def proxyConnect(socket: SocketChannel, proxies: Seq[Proxy], address: InetSocketAddress): SocketChannel = {
-      val proxy = proxies.head
-      val connectTo = if (proxies.tail.isEmpty) address else unresolved(proxies.tail.head)
-      try {
-        if (proxies.tail.isEmpty) {
+    @tailrec
+    def proxyConnect(socket: SocketChannel, proxies: List[Proxy], address: InetSocketAddress): SocketChannel = {
+      proxies match {
+        case proxy :: Nil ⇒
           // Last proxy reached, connect to destination address
-          connect(socket, proxy, connectTo)
-          socket
-        } else {
-          // Connect to next proxy
-          connect(socket, proxy, connectTo)
-          proxyConnect(socket, proxies.tail, address)
-        }
-      } catch {
-        case e: Throwable ⇒
-          throw new ProxyException(s"Connect through $proxy to $connectTo failed", e) // Rethrow wrapped
+          tryConnect(socket, proxy, address)
+
+        case proxy :: (tail @ (connectTo :: _)) ⇒
+          val sc = tryConnect(socket, proxy, unresolved(connectTo))
+          proxyConnect(sc, tail, address)
       }
     }
 
-    val socket = SocketChannel.open(resolved(proxies.head))
-    socket.socket().setKeepAlive(true)
-    socket.socket().setSoTimeout(60000)
-    Exception.allCatch.withApply { exc ⇒ IOUtils.closeQuietly(socket); throw exc } {
-      proxyConnect(socket, proxies, address)
+    val socketChannel: SocketChannel = {
+      val sc = SocketChannel.open(resolved(proxies.head))
+      val socket = sc.socket()
+      socket.setKeepAlive(true)
+      socket.setSoTimeout(60000)
+      sc
     }
+
+    proxyConnect(socketChannel, proxies.toList, address)
   }
 }

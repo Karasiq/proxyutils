@@ -3,8 +3,8 @@ package com.karasiq.parsers.socks
 import java.net.InetSocketAddress
 
 import akka.util.ByteString
+import com.karasiq.parsers._
 import com.karasiq.parsers.socks.internal._
-import com.karasiq.parsers.{BytePacket, ByteRange, ParserException}
 
 /**
  * Serializers for SOCKS client
@@ -129,16 +129,24 @@ object SocksClient {
         (SocksVersion.SocksV5, command, address, "")
     }
 
-    private def socks4aInvalidIP = ByteString(0x00, 0x00, 0x00, 0x01)
+    private def socks4a(address: InetSocketAddress, userId: String): ByteString = {
+      Port(address.getPort) ++ Socks4AInvalidIP() ++ NullTerminatedString(userId) ++ NullTerminatedString(address.getHostString)
+    }
 
     override def toBytes: PartialFunction[(SocksVersion, Command, InetSocketAddress, String), Seq[Byte]] = {
       case (socksVersion, command, address, userId) ⇒
-        val start = ByteString(SocksVersion(socksVersion), command.code, 0x00)
-        if (socksVersion == SocksVersion.SocksV4 && address.isUnresolved) {
-          start ++ Port(address.getPort) ++ socks4aInvalidIP ++ NullTerminatedString(userId) ++ NullTerminatedString(address.getHostString)
-        } else {
-          start ++ Address(socksVersion, address) ++ (if(socksVersion == SocksVersion.SocksV4) NullTerminatedString(userId) else ByteString.empty)
+        val head = ByteString(SocksVersion(socksVersion), command.code, 0x00)
+        val parameters = socksVersion match {
+          case SocksVersion.SocksV4 if address.isUnresolved ⇒ // SOCKS4A
+            socks4a(address, userId)
+
+          case v @ SocksVersion.SocksV4 ⇒ // SOCKS4
+            Address(v, address) ++ NullTerminatedString(userId)
+
+          case v @ SocksVersion.SocksV5 ⇒ // SOCKS5
+            Address(v, address)
         }
+        head ++ parameters
     }
   }
 
