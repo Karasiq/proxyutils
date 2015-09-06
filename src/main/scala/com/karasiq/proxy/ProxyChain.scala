@@ -130,7 +130,7 @@ sealed private class ProxyChainImpl(val proxies: Seq[Proxy]) extends ProxyChain 
   if (proxies.isEmpty) throw new IllegalArgumentException("Proxy chain shouldn't be empty")
 
   @inline
-  private def connect(socket: SocketChannel, proxy: Proxy, destination: InetSocketAddress): Unit = {
+  private def connect(socket: SocketChannel, proxy: Proxy, destination: InetSocketAddress): SocketChannel = {
     ProxyConnector(proxy).connect(socket, destination)
   }
 
@@ -142,7 +142,6 @@ sealed private class ProxyChainImpl(val proxies: Seq[Proxy]) extends ProxyChain 
 
     catcher {
       connect(socket, proxy, address)
-      socket
     }
   }
 

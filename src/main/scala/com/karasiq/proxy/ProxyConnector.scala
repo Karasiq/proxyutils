@@ -8,22 +8,27 @@ import com.karasiq.networkutils.SocketChannelWrapper._
 import com.karasiq.networkutils.http.headers.{HttpHeader, `Proxy-Authorization`}
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.http.{HttpConnect, HttpResponse}
-import com.karasiq.parsers.socks.SocksClient.SocksVersion, SocksVersion._
+import com.karasiq.parsers.socks.SocksClient.SocksVersion
+import com.karasiq.parsers.socks.SocksClient.SocksVersion._
 import com.karasiq.parsers.socks.{SocksClient, SocksServer}
+import com.karasiq.tls.{TLS, TLSKeyStore}
 
 import scala.language.implicitConversions
 
 abstract class ProxyConnector {
   @throws[ProxyException]("if connection failed")
-  def connect(socket: SocketChannel, destination: InetSocketAddress): Unit
+  def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel
 }
 
 object ProxyConnector {
-  def apply(protocol: String, proxy: Option[Proxy] = None): ProxyConnector = protocol match {
-    case "socks" | "socks5" ⇒ new SocksProxyConnector(SocksV5, proxy)
-    case "socks4" ⇒ new SocksProxyConnector(SocksV4, proxy)
-    case "http" | "https" | "" ⇒ new HttpProxyConnector(proxy)
-    case p ⇒ throw new IllegalArgumentException(s"Proxy protocol not supported: $p")
+  def apply(protocol: String, proxy: Option[Proxy] = None): ProxyConnector = {
+    if (protocol.startsWith("tls-")) new TLSProxyConnector(protocol.drop(4), proxy)
+    else protocol match {
+      case "socks" | "socks5" ⇒ new SocksProxyConnector(SocksV5, proxy)
+      case "socks4" ⇒ new SocksProxyConnector(SocksV4, proxy)
+      case "http" | "https" | "" ⇒ new HttpProxyConnector(proxy)
+      case p ⇒ throw new IllegalArgumentException(s"Proxy protocol not supported: $p")
+    }
   }
 
   def apply(proxy: Proxy): ProxyConnector = {
@@ -32,13 +37,68 @@ object ProxyConnector {
   }
 }
 
+class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends ProxyConnector {
+  private def stripProxy(proxy: Option[Proxy]): Option[Proxy] = {
+    proxy.map { proxy ⇒
+      new Proxy {
+        override def scheme: String = {
+          if (proxy.scheme.startsWith("tls-")) {
+            proxy.scheme.drop(4)
+          } else {
+            proxy.scheme
+          }
+        }
+
+        override def host: String = proxy.host
+
+        override def userInfo: Option[String] = None
+
+        override def port: Int = proxy.port
+      }
+    }
+  }
+
+  @throws[ProxyException]("if connection failed")
+  override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
+    val (certificate, key) = proxy.flatMap(_.userInfo).map(_.split(':').toList) match {
+      case Some(keyName :: password :: Nil) ⇒
+        val keyStore = new TLSKeyStore()
+        keyStore.getEntry(keyName) match {
+          case Some(k: TLSKeyStore.KeyEntry) ⇒
+            (k.chain, k.keyPair(password))
+
+          case _ ⇒
+            throw new IllegalArgumentException("Key not found: " + keyName)
+        }
+
+      case Some(keyName :: Nil) ⇒
+        val keyStore = new TLSKeyStore()
+        keyStore.getEntry(keyName) match {
+          case Some(k: TLSKeyStore.KeyEntry) ⇒
+            (k.chain, k.keyPair(TLSKeyStore.defaultPassword()))
+
+          case _ ⇒
+            throw new IllegalArgumentException("Key not found: " + keyName)
+        }
+
+      case _ ⇒
+        (null, null)
+    }
+
+    val tlsSocket = TLS.clientWrapper(socket, proxy.map(_.toInetSocketAddress).orNull, certificate, key)
+    val connector = ProxyConnector(protocol, stripProxy(proxy))
+    connector.connect(tlsSocket, destination)
+  }
+}
+
 class HttpProxyConnector(proxy: Option[Proxy] = None) extends ProxyConnector {
   @throws[ProxyException]("if connection failed")
-  override def connect(socket: SocketChannel, destination: InetSocketAddress): Unit = {
+  override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
     val auth: Seq[HttpHeader] = proxy.flatMap(_.userInfo).map(userInfo ⇒ `Proxy-Authorization`.basic(userInfo)).toSeq
     socket.writeRead(HttpConnect(destination, auth)) match {
       case HttpResponse((status, headers)) ⇒
         if (status.code != 200) throw new ProxyException(s"HTTP CONNECT failed: ${status.code} ${status.message}")
+        socket
 
       case bs: ByteString ⇒
         throw new ProxyException(s"Bad HTTPS proxy response: ${bs.utf8String}")
@@ -79,7 +139,7 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
   }
 
   @throws[ProxyException]("if connection failed")
-  override def connect(socket: SocketChannel, destination: InetSocketAddress): Unit = {
+  override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
     version match {
       case SocksVersion.SocksV5 ⇒
         socket.writeRead(AuthRequest(Seq(AuthMethod.NoAuth))) match {
@@ -88,6 +148,7 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
             socket.writeRead(ConnectionRequest((SocksVersion.SocksV5, Command.TcpConnection, destination, ""))) match {
               case ConnectionStatusResponse((SocksVersion.SocksV5, address, status)) ⇒
                 if(status != Codes.Socks5.REQUEST_GRANTED) throw new ProxyException(s"SOCKS request rejected: $status")
+                socket
 
               case bs ⇒
                 throw new ProxyException(s"Bad response from SOCKS5 server: $bs")
@@ -101,6 +162,7 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
         socket.writeRead(ConnectionRequest((SocksVersion.SocksV4, Command.TcpConnection, destination, authInfo._1))) match {
           case ConnectionStatusResponse((SocksVersion.SocksV4, address, status)) ⇒
             if(status != Codes.Socks4.REQUEST_GRANTED) throw new ProxyException(s"SOCKS request rejected: $status")
+            socket
 
           case _ ⇒
             throw new ProxyException("Bad response from SOCKS4 server")

@@ -22,6 +22,9 @@ case class ConnectThroughProxy(proxy: Proxy, address: InetSocketAddress)
 case class ConnectedThroughProxy(proxy: Proxy, address: InetSocketAddress)
 case class ProxyConnectionFailed(error: Throwable)
 
+/**
+ * @todo TLS proxy
+ */
 class ProxyConnectorActor extends Actor with ActorLogging {
   import context.system
   private implicit val timeout = Timeout(1 minute)
@@ -55,7 +58,7 @@ class ProxyConnectorActor extends Actor with ActorLogging {
   }
 
   protected def socks5Auth(proxy: Proxy, connection: ActorRef, authMethod: AuthMethod, handler: ActorRef)(onSuccess: ⇒ Unit): Unit = authMethod match {
-  case AuthMethod.NoAuth ⇒
+    case AuthMethod.NoAuth ⇒
       onSuccess
 
     case AuthMethod.UsernamePassword if proxy.userInfo.isDefined ⇒
@@ -110,9 +113,12 @@ class ProxyConnectorActor extends Actor with ActorLogging {
   private def connectProxy(connection: ActorRef, proxy: Proxy, address: InetSocketAddress, handler: ActorRef): Unit = {
     log.debug("Connecting through proxy {} to {}", proxy, address)
     proxy.scheme match {
-      case "socks4" ⇒ connectSocks(connection, proxy, address, SocksVersion.SocksV4, handler)
-      case "socks5" | "socks" ⇒ connectSocks(connection, proxy, address, SocksVersion.SocksV5, handler)
-      case "http" | "https" | "" ⇒ connectHttp(connection, proxy, address, handler)
+      case "socks4" ⇒
+        connectSocks(connection, proxy, address, SocksVersion.SocksV4, handler)
+      case "socks5" | "socks" ⇒
+        connectSocks(connection, proxy, address, SocksVersion.SocksV5, handler)
+      case "http" | "https" | "" ⇒
+        connectHttp(connection, proxy, address, handler)
       case _ ⇒ throw new ProxyException("Invalid proxy scheme: " + proxy.scheme)
     }
   }

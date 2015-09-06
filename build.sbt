@@ -14,7 +14,10 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-actor" % "2.3.11",
   "com.typesafe.akka" %% "akka-testkit" % "2.3.11" % "test",
   "com.karasiq" %% "akka-commons" % "1.0",
-  "org.scalatest" %% "scalatest" % "2.2.4" % "test"
+  "org.scalatest" %% "scalatest" % "2.2.4" % "test",
+  "org.bouncycastle" % "bcprov-jdk15on" % "1.52",
+  "org.bouncycastle" % "bcpkix-jdk15on" % "1.52"
 )
 
-scalacOptions ++= Seq("-optimize", "-deprecation", "-feature")
+scalacOptions ++= Seq(//"-optimize",
+  "-deprecation", "-feature")
