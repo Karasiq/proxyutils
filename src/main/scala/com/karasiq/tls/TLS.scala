@@ -12,9 +12,20 @@ import org.bouncycastle.crypto.tls._
 
 import scala.collection.GenTraversableOnce
 import scala.util.control.Exception
+import java.util.logging.{Logger, Level}
 
 object TLS {
-  private val logger = java.util.logging.Logger.getLogger("TLS")
+  private val logger = Logger.getLogger("TLS")
+  
+  def enableLogging(): Unit = {
+	logger.setLevel(Level.INFO)
+  }
+  
+  def disableLogging(): Unit = {
+	logger.setLevel(Level.OFF)
+  }
+  
+  disableLogging() // Disabled by default
 
   type CertificateChain = org.bouncycastle.crypto.tls.Certificate
   type Certificate = org.bouncycastle.asn1.x509.Certificate
