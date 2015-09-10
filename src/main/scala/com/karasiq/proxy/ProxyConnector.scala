@@ -78,7 +78,7 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
         val keyStore = new TLSKeyStore()
         keyStore.getEntry(keyName) match {
           case Some(k: TLSKeyStore.KeyEntry) ⇒
-            Some(TLS.CertificateKey(k.chain, k.keyPair(TLSKeyStore.defaultPassword())))
+            Some(TLS.CertificateKey(k.chain, k.keyPair()))
 
           case _ ⇒
             throw new IllegalArgumentException("Key not found: " + keyName)
