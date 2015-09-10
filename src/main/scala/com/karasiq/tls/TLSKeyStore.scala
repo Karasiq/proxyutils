@@ -1,17 +1,13 @@
 package com.karasiq.tls
 
 import java.io.FileInputStream
-import java.security.interfaces.RSAPrivateCrtKey
-import java.security.{KeyStore, PrivateKey}
+import java.security.KeyStore
 
 import com.karasiq.tls.TLS.{Certificate, CertificateChain}
 import com.karasiq.tls.TLSKeyStore.{CertificateEntry, KeyEntry}
+import com.karasiq.tls.internal.BCConversions._
 import com.typesafe.config.ConfigFactory
-import org.bouncycastle.asn1.x509
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
-import org.bouncycastle.crypto.params._
-import org.bouncycastle.crypto.util.{PrivateKeyFactory, PublicKeyFactory}
 
 import scala.collection.JavaConversions._
 import scala.util.control.Exception
@@ -56,41 +52,17 @@ class TLSKeyStore(keyStore: KeyStore = TLSKeyStore.defaultKeyStore()) {
     keyStore.containsAlias(alias)
   }
 
-  private def convertPKCS8Key(data: Array[Byte], public: SubjectPublicKeyInfo): AsymmetricCipherKeyPair = {
-    new AsymmetricCipherKeyPair(PublicKeyFactory.createKey(public), PrivateKeyFactory.createKey(data))
-  }
-
-  private def convertRsaKey(rsa: RSAPrivateCrtKey): AsymmetricCipherKeyPair = {
-    val publicParameters = new RSAKeyParameters(false, rsa.getModulus, rsa.getPublicExponent)
-    val privateParameters = new RSAPrivateCrtKeyParameters(rsa.getModulus, rsa.getPublicExponent,
-      rsa.getPrivateExponent, rsa.getPrimeP, rsa.getPrimeQ, rsa.getPrimeExponentP, rsa.getPrimeExponentQ, rsa.getCrtCoefficient)
-    new AsymmetricCipherKeyPair(publicParameters, privateParameters)
-  }
-
   def getKey(alias: String, password: String = TLSKeyStore.defaultPassword()): AsymmetricCipherKeyPair = {
     val key = keyStore.getKey(alias, password.toCharArray)
-    key match {
-      case rsa: RSAPrivateCrtKey ⇒
-        convertRsaKey(rsa)
-
-      case privateKey: PrivateKey ⇒
-        convertPKCS8Key(privateKey.getEncoded, getCertificate(alias).getSubjectPublicKeyInfo)
-
-      case _ ⇒
-        throw new IllegalArgumentException("Not supported")
-    }
-  }
-
-  private def convertCertificate(javaCert: java.security.cert.Certificate): TLS.Certificate = {
-    x509.Certificate.getInstance(javaCert.getEncoded)
+    key.toAsymmetricCipherKeyPair(getCertificate(alias).getSubjectPublicKeyInfo)
   }
 
   def getCertificate(alias: String): TLS.Certificate = {
-    convertCertificate(keyStore.getCertificate(alias))
+    keyStore.getCertificate(alias).toTlsCertificate
   }
 
   def getCertificateChain(alias: String): TLS.CertificateChain = {
-    new CertificateChain(keyStore.getCertificateChain(alias).map(convertCertificate))
+    new CertificateChain(keyStore.getCertificateChain(alias).map(_.toTlsCertificate))
   }
 
   def getEntry(alias: String): Option[TLSKeyStore.Entry] = {

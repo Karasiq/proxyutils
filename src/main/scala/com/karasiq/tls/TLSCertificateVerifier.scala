@@ -8,8 +8,7 @@ import com.typesafe.config.ConfigFactory
 import org.bouncycastle.asn1.x500.style.BCStyle
 import org.bouncycastle.asn1.x509
 import org.bouncycastle.cert.X509CertificateHolder
-import org.bouncycastle.operator.DefaultDigestAlgorithmIdentifierFinder
-import org.bouncycastle.operator.bc.BcRSAContentVerifierProviderBuilder
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder
 
 import scala.annotation.tailrec
 import scala.util.control.Exception
@@ -33,7 +32,8 @@ object TLSCertificateVerifier {
 
 class TLSCertificateVerifier(trustStore: KeyStore = TLSCertificateVerifier.defaultTrustStore()) extends TLSKeyStore(trustStore) {
   protected def isCertificateValid(certificate: x509.Certificate, issuer: x509.Certificate): Boolean = {
-    val contentVerifierProvider = new BcRSAContentVerifierProviderBuilder(new DefaultDigestAlgorithmIdentifierFinder())
+    val contentVerifierProvider = new JcaContentVerifierProviderBuilder()
+      .setProvider("BC")
       .build(new X509CertificateHolder(issuer))
 
     val certHolder = new X509CertificateHolder(certificate)

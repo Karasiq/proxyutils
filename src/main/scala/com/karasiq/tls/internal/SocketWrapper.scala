@@ -1,4 +1,4 @@
-package com.karasiq.tls
+package com.karasiq.tls.internal
 
 import java.io.{InputStream, OutputStream}
 import java.net.{InetAddress, Socket, SocketAddress}

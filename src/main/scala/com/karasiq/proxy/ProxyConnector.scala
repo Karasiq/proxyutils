@@ -11,7 +11,10 @@ import com.karasiq.parsers.http.{HttpConnect, HttpResponse}
 import com.karasiq.parsers.socks.SocksClient.SocksVersion
 import com.karasiq.parsers.socks.SocksClient.SocksVersion._
 import com.karasiq.parsers.socks.{SocksClient, SocksServer}
-import com.karasiq.tls.{TLS, TLSKeyStore}
+import com.karasiq.tls.TLS.CertificateKey
+import com.karasiq.tls.internal.TLSUtils
+import com.karasiq.tls.{TLS, TLSCertificateVerifier, TLSClientWrapper, TLSKeyStore}
+import org.bouncycastle.crypto.tls.CertificateRequest
 
 import scala.language.implicitConversions
 
@@ -60,12 +63,12 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
 
   @throws[ProxyException]("if connection failed")
   override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
-    val (certificate, key) = proxy.flatMap(_.userInfo).map(_.split(':').toList) match {
+    val certificate: Option[TLS.CertificateKey] = proxy.flatMap(_.userInfo).map(_.split(':').toList) match {
       case Some(keyName :: password :: Nil) ⇒
         val keyStore = new TLSKeyStore()
         keyStore.getEntry(keyName) match {
           case Some(k: TLSKeyStore.KeyEntry) ⇒
-            (k.chain, k.keyPair(password))
+            Some(TLS.CertificateKey(k.chain, k.keyPair(password)))
 
           case _ ⇒
             throw new IllegalArgumentException("Key not found: " + keyName)
@@ -75,19 +78,27 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
         val keyStore = new TLSKeyStore()
         keyStore.getEntry(keyName) match {
           case Some(k: TLSKeyStore.KeyEntry) ⇒
-            (k.chain, k.keyPair(TLSKeyStore.defaultPassword()))
+            Some(TLS.CertificateKey(k.chain, k.keyPair(TLSKeyStore.defaultPassword())))
 
           case _ ⇒
             throw new IllegalArgumentException("Key not found: " + keyName)
         }
 
       case _ ⇒
-        (null, null)
+        None
     }
 
-    val tlsSocket = TLS.clientWrapper(socket, proxy.map(_.toInetSocketAddress).orNull, certificate, key)
+    val tlsSocket = new TLSClientWrapper(new TLSCertificateVerifier(), proxy.map(_.toInetSocketAddress).orNull) {
+      override protected def getClientCertificate(certificateRequest: CertificateRequest): Option[CertificateKey] = {
+        certificate.collect {
+          case cert if TLSUtils.isInAuthorities(cert.certificateChain, certificateRequest) ⇒
+            cert
+        }
+      }
+    }
+
     val connector = ProxyConnector(protocol, stripProxy(proxy))
-    connector.connect(tlsSocket, destination)
+    connector.connect(tlsSocket(socket), destination)
   }
 }
 

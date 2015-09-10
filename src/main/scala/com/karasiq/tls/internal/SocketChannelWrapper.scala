@@ -1,14 +1,49 @@
-package com.karasiq.tls
+package com.karasiq.tls.internal
 
-import java.io.FileDescriptor
+import java.io.{FileDescriptor, InputStream, OutputStream}
 import java.net.{Socket, SocketAddress, SocketOption}
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
-import java.nio.channels.spi.AbstractSelectableChannel
 import java.util
 
 import org.bouncycastle.crypto.tls.TlsProtocol
 import sun.nio.ch.{SelChImpl, SelectionKeyImpl}
+
+private[tls] object SocketChannelWrapper {
+  def inputStream(connection: SocketChannel): InputStream = new InputStream {
+    override def read(): Int = {
+      val buffer = ByteBuffer.allocate(1)
+      if (connection.read(buffer) == -1) -1 else {
+        buffer.flip()
+        buffer.get()
+      }
+    }
+
+    override def read(b: Array[Byte], off: Int, len: Int): Int = {
+      val buffer = ByteBuffer.allocate(len)
+      val length = connection.read(buffer)
+      buffer.flip()
+      buffer.get(b, off, length)
+      length
+    }
+  }
+
+  def outputStream(connection: SocketChannel): OutputStream = new OutputStream {
+    override def write(b: Int): Unit = {
+      val buffer = ByteBuffer.allocate(1)
+      buffer.put(b.toByte)
+      buffer.flip()
+      connection.write(buffer)
+    }
+
+    override def write(b: Array[Byte], off: Int, len: Int): Unit = {
+      val buffer = ByteBuffer.allocate(len)
+      buffer.put(b, off, len)
+      buffer.flip()
+      connection.write(buffer)
+    }
+  }
+}
 
 final private[tls] class SocketChannelWrapper(connection: SocketChannel, protocol: TlsProtocol) extends SocketChannel(connection.provider()) with SelChImpl {
   @inline
@@ -78,15 +113,10 @@ final private[tls] class SocketChannelWrapper(connection: SocketChannel, protoco
 
   override def implCloseSelectableChannel(): Unit = {
     protocol.close() // TLS close
-    classOf[AbstractSelectableChannel].getMethods.find(_.getName == "implCloseSelectableChannel").foreach { method ⇒
-      method.setAccessible(true)
-      method.invoke(connection)
-    }
+    connection.close() // Connection close
   }
 
   override def getOption[T](name: SocketOption[T]): T = connection.getOption(name)
 
   override def supportedOptions(): util.Set[SocketOption[_]] = connection.supportedOptions()
-
-
 }
