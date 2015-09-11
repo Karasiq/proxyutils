@@ -1,4 +1,4 @@
-import java.net.InetSocketAddress
+import java.net.{InetSocketAddress, URI}
 import java.nio.channels.SocketChannel
 
 import akka.actor._
@@ -10,6 +10,7 @@ import com.karasiq.networkutils.http.headers.HttpHeader
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.http.{HttpMethod, HttpRequest}
 import com.karasiq.proxy._
+import com.typesafe.config.ConfigFactory
 import org.apache.commons.io.IOUtils
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -24,19 +25,26 @@ class ProxyChainTest extends FlatSpec with Matchers {
   implicit val actorSystem = ActorSystem("proxyChain")
   import actorSystem.dispatcher
 
-  val testHost: InetSocketAddress = InetSocketAddress.createUnresolved("ipecho.net", 80) // Host for test connection
-  val testUrl: String = "/plain" // URL for test connection
+  val config = ConfigFactory.load().getConfig("karasiq.proxy-chain-test")
 
-  val testProxies = IndexedSeq(
-    Proxy("127.0.0.1", 9999, "http"), // HTTP proxy
-    Proxy("127.0.0.1", 1080, "socks"), // Socks proxy
-    Proxy("127.0.0.1", 443, "tls-socks", Some("localhost")) // TLS-socks proxy
-  )
+  val (testHost, testUrl) = {
+    val uri = new URI(config.getString("url"))
+    (InetSocketAddress.createUnresolved(uri.getHost, Some(uri.getPort).filter(_ != -1).getOrElse(80)), uri.getPath)
+  }
+
+  val testProxies: List[Proxy] = {
+    import com.karasiq.networkutils.uri._
+
+    import scala.collection.JavaConversions._
+
+    config.getStringList("proxies").toList
+      .map(url ⇒ Proxy(url))
+  }
 
   private def checkResponse(future: Future[String]): Unit = {
     val response = Await.result(future, 1 minute)
     println(response)
-    assert(response.startsWith("HTTP/1.1 200 OK"))
+    assert(response.startsWith(config.getString("ok-status")))
   }
 
   private def readFrom(socket: SocketChannel): Unit = {
@@ -77,28 +85,28 @@ class ProxyChainTest extends FlatSpec with Matchers {
   private def tryAndClose(sc: SocketChannel) = Exception.allCatch.andFinally(IOUtils.closeQuietly(sc))
 
   "Connector" should "connect to HTTP proxy" in {
-    assert(testProxies.head.scheme == "http")
-    val socket = SocketChannel.open(testProxies.head.toInetSocketAddress)
+    val Some(proxy) = testProxies.find(_.scheme == "http")
+    val socket = SocketChannel.open(proxy.toInetSocketAddress)
     tryAndClose(socket) {
-      val proxySocket = ProxyConnector("http", Some(testProxies.head)).connect(socket, testHost)
+      val proxySocket = ProxyConnector("http", Some(proxy)).connect(socket, testHost)
       readFrom(proxySocket)
     }
   }
 
   it should "connect to SOCKS proxy" in {
-    assert(testProxies(1).scheme == "socks")
-    val socket = SocketChannel.open(testProxies(1).toInetSocketAddress)
+    val Some(proxy) = testProxies.find(_.scheme == "socks")
+    val socket = SocketChannel.open(proxy.toInetSocketAddress)
     tryAndClose(socket) {
-      val proxySocket = ProxyConnector("socks", Some(testProxies(1))).connect(socket, testHost)
+      val proxySocket = ProxyConnector("socks", Some(proxy)).connect(socket, testHost)
       readFrom(proxySocket)
     }
   }
 
   it should "connect through TLS-SOCKS proxy" in {
-    assert(testProxies.last.scheme == "tls-socks")
-    val socket = SocketChannel.open(testProxies.last.toInetSocketAddress)
+    val Some(proxy) = testProxies.find(_.scheme == "tls-socks")
+    val socket = SocketChannel.open(proxy.toInetSocketAddress)
     tryAndClose(socket) {
-      val proxySocket = ProxyConnector("tls-socks", Some(testProxies.last)).connect(socket, testHost)
+      val proxySocket = ProxyConnector("tls-socks", Some(proxy)).connect(socket, testHost)
       readFrom(proxySocket)
     }
   }
@@ -112,23 +120,25 @@ class ProxyChainTest extends FlatSpec with Matchers {
   }
 
   "Connector actor" should "connect to HTTP proxy" in {
+    val Some(proxy) = testProxies.find(_.scheme == "http")
     val connectorActor = TestActorRef[ProxyConnectorActor]
-    checkResponse(connectActorTo(connectorActor, testProxies.head).flatMap {
+    checkResponse(connectActorTo(connectorActor, proxy).flatMap {
       case ConnectedThroughProxy(_, _) ⇒
         readFromActor(connectorActor)
     })
   }
 
   it should "connect to SOCKS proxy" in {
+    val Some(proxy) = testProxies.find(_.scheme == "socks")
     val connectorActor = TestActorRef[ProxyConnectorActor]
-    checkResponse(connectActorTo(connectorActor, testProxies(1)).flatMap {
+    checkResponse(connectActorTo(connectorActor, proxy).flatMap {
       case ConnectedThroughProxy(_, _) ⇒
         readFromActor(connectorActor)
     })
   }
 
   it should "connect through proxy chain" in {
-    val chain = ProxyChain(testProxies.dropRight(1):_*)
+    val chain = ProxyChain(testProxies.filterNot(_.scheme.startsWith("tls-")):_*)
     checkResponse(chain.connectActor(actorSystem, testHost).flatMap {
       case connection ⇒
         readFromActor(connection)
