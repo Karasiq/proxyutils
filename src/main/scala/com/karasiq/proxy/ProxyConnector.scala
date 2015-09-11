@@ -63,26 +63,12 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
 
   @throws[ProxyException]("if connection failed")
   override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
-    val certificate: Option[TLS.CertificateKey] = proxy.flatMap(_.userInfo).map(_.split(':').toList) match {
+    val keySetOption: Option[TLS.KeySet] = proxy.flatMap(_.userInfo).map(_.split(':').toList) match {
       case Some(keyName :: password :: Nil) ⇒
-        val keyStore = new TLSKeyStore()
-        keyStore.getEntry(keyName) match {
-          case Some(k: TLSKeyStore.KeyEntry) ⇒
-            Some(TLS.CertificateKey(k.chain, k.keyPair(password)))
-
-          case _ ⇒
-            throw new IllegalArgumentException("Key not found: " + keyName)
-        }
+        Some(TLS.KeySet(new TLSKeyStore(), keyName, password))
 
       case Some(keyName :: Nil) ⇒
-        val keyStore = new TLSKeyStore()
-        keyStore.getEntry(keyName) match {
-          case Some(k: TLSKeyStore.KeyEntry) ⇒
-            Some(TLS.CertificateKey(k.chain, k.keyPair()))
-
-          case _ ⇒
-            throw new IllegalArgumentException("Key not found: " + keyName)
-        }
+        Some(TLS.KeySet(new TLSKeyStore(), keyName))
 
       case _ ⇒
         None
@@ -90,10 +76,7 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
 
     val tlsSocket = new TLSClientWrapper(new TLSCertificateVerifier(), proxy.map(_.toInetSocketAddress).orNull) {
       override protected def getClientCertificate(certificateRequest: CertificateRequest): Option[CertificateKey] = {
-        certificate.collect {
-          case cert if TLSUtils.isInAuthorities(cert.certificateChain, certificateRequest) ⇒
-            cert
-        }
+        keySetOption.flatMap(TLSUtils.certificateFor(_, certificateRequest))
       }
     }
 
