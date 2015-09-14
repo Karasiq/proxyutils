@@ -12,10 +12,12 @@ import com.karasiq.parsers.socks.SocksClient.SocksVersion
 import com.karasiq.parsers.socks.SocksClient.SocksVersion._
 import com.karasiq.parsers.socks.{SocksClient, SocksServer}
 import com.karasiq.tls.TLS.CertificateKey
+import com.karasiq.tls._
 import com.karasiq.tls.internal.TLSUtils
-import com.karasiq.tls.{TLS, TLSCertificateVerifier, TLSClientWrapper, TLSKeyStore}
 import org.bouncycastle.crypto.tls.CertificateRequest
 
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Promise}
 import scala.language.implicitConversions
 
 abstract class ProxyConnector {
@@ -74,14 +76,25 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
         None
     }
 
+    val result = Promise[SocketChannel]()
+
     val tlsSocket = new TLSClientWrapper(new TLSCertificateVerifier(), proxy.map(_.toInetSocketAddress).orNull) {
+      override protected def onError(message: String, exc: Throwable): Unit = {
+        result.tryFailure(new ProxyException(message, exc))
+        super.onError(message, exc)
+      }
+
       override protected def getClientCertificate(certificateRequest: CertificateRequest): Option[CertificateKey] = {
         keySetOption.flatMap(TLSUtils.certificateFor(_, certificateRequest))
       }
     }
 
-    val connector = ProxyConnector(protocol, stripProxy(proxy))
-    connector.connect(tlsSocket(socket), destination)
+    result.trySuccess {
+      val connector = ProxyConnector(protocol, stripProxy(proxy))
+      connector.connect(tlsSocket(socket), destination)
+    }
+
+    Await.result(result.future, Duration.Inf)
   }
 }
 

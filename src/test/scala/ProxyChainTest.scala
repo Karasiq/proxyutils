@@ -102,11 +102,11 @@ class ProxyChainTest extends FlatSpec with Matchers {
     }
   }
 
-  it should "connect through TLS-SOCKS proxy" in {
-    val Some(proxy) = testProxies.find(_.scheme == "tls-socks")
+  it should "connect through TLS proxy" in {
+    val Some(proxy) = testProxies.find(_.scheme.startsWith("tls-"))
     val socket = SocketChannel.open(proxy.toInetSocketAddress)
     tryAndClose(socket) {
-      val proxySocket = ProxyConnector("tls-socks", Some(proxy)).connect(socket, testHost)
+      val proxySocket = ProxyConnector(proxy.scheme, Some(proxy)).connect(socket, testHost)
       readFrom(proxySocket)
     }
   }
