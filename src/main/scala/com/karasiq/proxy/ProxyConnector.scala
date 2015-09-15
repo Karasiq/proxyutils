@@ -16,9 +16,9 @@ import com.karasiq.tls._
 import com.karasiq.tls.internal.TLSUtils
 import org.bouncycastle.crypto.tls.CertificateRequest
 
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 import scala.concurrent.{Await, Promise}
-import scala.language.implicitConversions
+import scala.language.{implicitConversions, postfixOps}
 
 abstract class ProxyConnector {
   @throws[ProxyException]("if connection failed")
@@ -78,7 +78,7 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
 
     val result = Promise[SocketChannel]()
 
-    val tlsSocket = new TLSClientWrapper(new TLSCertificateVerifier(), proxy.map(_.toInetSocketAddress).orNull) {
+    val tlsWrapper = new TLSClientWrapper(new TLSCertificateVerifier(), proxy.map(_.toInetSocketAddress).orNull) {
       override protected def onError(message: String, exc: Throwable): Unit = {
         result.tryFailure(new ProxyException(message, exc))
         super.onError(message, exc)
@@ -89,12 +89,11 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
       }
     }
 
-    result.trySuccess {
-      val connector = ProxyConnector(protocol, stripProxy(proxy))
-      connector.connect(tlsSocket(socket), destination)
-    }
+    result.trySuccess(tlsWrapper(socket))
 
-    Await.result(result.future, Duration.Inf)
+    val tlsSocket = Await.result(result.future, 3 minutes)
+    val connector = ProxyConnector(protocol, stripProxy(proxy))
+    connector.connect(tlsSocket, destination)
   }
 }
 
@@ -117,6 +116,8 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
   import SocksClient._
   import SocksServer._
 
+  private def socksBufferSize: Int = 512
+
   private def authInfo: (String, String) = {
     proxy.flatMap(_.userInfo).map(_.split(":", 2).toList) match {
       case Some(userName :: password :: Nil) ⇒
@@ -133,7 +134,7 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
 
     case AuthMethod.UsernamePassword if proxy.exists(_.userInfo.isDefined) ⇒
       val (userName, password) = authInfo
-      socket.writeRead(UsernameAuthRequest((userName, password))) match {
+      socket.writeRead(UsernameAuthRequest((userName, password)), socksBufferSize) match {
         case AuthStatusResponse(0x00) ⇒
           // Success
 
@@ -149,10 +150,10 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
   override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
     version match {
       case SocksVersion.SocksV5 ⇒
-        socket.writeRead(AuthRequest(Seq(AuthMethod.NoAuth))) match {
+        socket.writeRead(AuthRequest(Seq(AuthMethod.NoAuth)), socksBufferSize) match {
           case AuthMethodResponse(authMethod) ⇒
             socks5Auth(socket, authMethod)
-            socket.writeRead(ConnectionRequest((SocksVersion.SocksV5, Command.TcpConnection, destination, ""))) match {
+            socket.writeRead(ConnectionRequest((SocksVersion.SocksV5, Command.TcpConnection, destination, "")), socksBufferSize) match {
               case ConnectionStatusResponse((SocksVersion.SocksV5, address, status)) ⇒
                 if(status != Codes.Socks5.REQUEST_GRANTED) throw new ProxyException(s"SOCKS request rejected: $status")
                 socket
@@ -166,7 +167,7 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
         }
 
       case SocksVersion.SocksV4 ⇒
-        socket.writeRead(ConnectionRequest((SocksVersion.SocksV4, Command.TcpConnection, destination, authInfo._1))) match {
+        socket.writeRead(ConnectionRequest((SocksVersion.SocksV4, Command.TcpConnection, destination, authInfo._1)), socksBufferSize) match {
           case ConnectionStatusResponse((SocksVersion.SocksV4, address, status)) ⇒
             if(status != Codes.Socks4.REQUEST_GRANTED) throw new ProxyException(s"SOCKS request rejected: $status")
             socket
