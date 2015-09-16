@@ -21,13 +21,39 @@ import scala.concurrent.{Await, Promise}
 import scala.language.{implicitConversions, postfixOps}
 
 abstract class ProxyConnector {
+  /**
+   * Connects through proxy server to specified address
+   * @param socket Socket channel
+   * @param destination Destination address
+   * @throws com.karasiq.proxy.ProxyException if connection failed
+   * @return Proxified connection
+   */
   @throws[ProxyException]("if connection failed")
   def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel
 }
 
-object ProxyConnector {
+/**
+ * Proxy connector factory
+ */
+trait ProxyConnectorFactory {
+  /**
+   * TLS key store
+   */
+  protected def keyStore: TLSKeyStore
+
+  /**
+   * TLS certificate verifier
+   */
+  protected def certificateVerifier: TLSCertificateVerifier
+
+  /**
+   * Provides proxy connector for specified proxy and protocol
+   * @param protocol Proxy protocol
+   * @param proxy Proxy info
+   * @return Connector
+   */
   def apply(protocol: String, proxy: Option[Proxy] = None): ProxyConnector = {
-    if (protocol.startsWith("tls-")) new TLSProxyConnector(protocol.drop(4), proxy)
+    if (protocol.startsWith("tls-")) new TLSProxyConnector(protocol.drop(4), keyStore, certificateVerifier, proxy)
     else protocol match {
       case "socks" | "socks5" ⇒ new SocksProxyConnector(SocksV5, proxy)
       case "socks4" ⇒ new SocksProxyConnector(SocksV4, proxy)
@@ -36,13 +62,36 @@ object ProxyConnector {
     }
   }
 
-  def apply(proxy: Proxy): ProxyConnector = {
+  /**
+   * Provides proxy connector for specified proxy
+   * @param proxy Proxy info
+   * @return Connector
+   */
+  final def apply(proxy: Proxy): ProxyConnector = {
     require(proxy != null, "Invalid proxy")
     apply(proxy.scheme, Some(proxy))
   }
 }
 
-class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends ProxyConnector {
+object ProxyConnector extends ProxyConnectorFactory {
+  override protected val keyStore: TLSKeyStore = new TLSKeyStore()
+
+  override protected val certificateVerifier: TLSCertificateVerifier = new TLSCertificateVerifier()
+
+  private[proxy] def userInfoSeq(proxy: Option[Proxy]): Option[List[String]] = {
+    proxy.flatMap(_.userInfo)
+      .map(_.split(':').toList) // "user:pass" -> Some("user" :: "pass" :: Nil)
+  }
+}
+
+/**
+ * TLS proxy connector
+ * @param protocol Underlying protocol
+ * @param keyStore TLS key store
+ * @param certificateVerifier TLS certificate verifier
+ * @param proxy Proxy info
+ */
+class TLSProxyConnector(protocol: String, keyStore: TLSKeyStore, certificateVerifier: TLSCertificateVerifier, proxy: Option[Proxy] = None) extends ProxyConnector {
   private def stripProxy(proxy: Option[Proxy]): Option[Proxy] = {
     proxy.map { proxy ⇒
       new Proxy {
@@ -65,12 +114,12 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
 
   @throws[ProxyException]("if connection failed")
   override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
-    val keySetOption: Option[TLS.KeySet] = proxy.flatMap(_.userInfo).map(_.split(':').toList) match {
+    val keySetOption: Option[TLS.KeySet] = ProxyConnector.userInfoSeq(proxy) match {
       case Some(keyName :: password :: Nil) ⇒
-        Some(TLS.KeySet(new TLSKeyStore(), keyName, password))
+        Some(TLS.KeySet(keyStore, keyName, password))
 
       case Some(keyName :: Nil) ⇒
-        Some(TLS.KeySet(new TLSKeyStore(), keyName))
+        Some(TLS.KeySet(keyStore, keyName))
 
       case _ ⇒
         None
@@ -78,7 +127,7 @@ class TLSProxyConnector(protocol: String, proxy: Option[Proxy] = None) extends P
 
     val result = Promise[SocketChannel]()
 
-    val tlsWrapper = new TLSClientWrapper(new TLSCertificateVerifier(), proxy.map(_.toInetSocketAddress).orNull) {
+    val tlsWrapper = new TLSClientWrapper(certificateVerifier, proxy.map(_.toInetSocketAddress).orNull) {
       override protected def onError(message: String, exc: Throwable): Unit = {
         result.tryFailure(new ProxyException(message, exc))
         super.onError(message, exc)
@@ -116,10 +165,11 @@ class SocksProxyConnector(version: SocksVersion, proxy: Option[Proxy] = None) ex
   import SocksClient._
   import SocksServer._
 
+  @inline
   private def socksBufferSize: Int = 512
 
   private def authInfo: (String, String) = {
-    proxy.flatMap(_.userInfo).map(_.split(":", 2).toList) match {
+    ProxyConnector.userInfoSeq(proxy) match {
       case Some(userName :: password :: Nil) ⇒
         userName → password
 

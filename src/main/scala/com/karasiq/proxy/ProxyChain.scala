@@ -17,18 +17,17 @@ import scala.language.{implicitConversions, postfixOps}
 import scala.util.Random
 import scala.util.control.Exception
 
-object ProxyChain {
-  private[proxy] def resolved(p: Proxy): InetSocketAddress = p.toInetSocketAddress
+trait ProxyChainFactory {
+  protected def proxyConnectorFactory: ProxyConnectorFactory
 
-  private[proxy] def unresolved(p: Proxy): InetSocketAddress = InetSocketAddress.createUnresolved(p.host, p.port)
-
+  @inline
   private def proxyFromString(s: String): Proxy = {
     Proxy(if (s.contains("://")) s else s"http://$s")
   }
 
   def apply(proxies: Proxy*): ProxyChain = {
     if (proxies.isEmpty) new EmptyProxyChain
-    else new ProxyChainImpl(proxies)
+    else new ProxyChainImpl(proxies, proxyConnectorFactory)
   }
 
   def chainFrom(proxies: Seq[Proxy], randomize: Boolean = false, hops: Int = 0): Seq[Proxy] = {
@@ -43,10 +42,18 @@ object ProxyChain {
   }
 
   @throws[IllegalArgumentException]("if invalid config provided")
-  def config(config: Config): ProxyChain = {
+  final def config(config: Config): ProxyChain = {
     val chain: Seq[Proxy] = Seq(config.getConfig("entry"), config.getConfig("middle"), config.getConfig("exit")).flatMap(selectProxies)
     apply(chain: _*)
   }
+}
+
+object ProxyChain extends ProxyChainFactory {
+  override protected def proxyConnectorFactory: ProxyConnectorFactory = ProxyConnector
+
+  private[proxy] def resolved(p: Proxy): InetSocketAddress = p.toInetSocketAddress
+
+  private[proxy] def unresolved(p: Proxy): InetSocketAddress = InetSocketAddress.createUnresolved(p.host, p.port)
 }
 
 abstract class ProxyChain {
@@ -123,7 +130,7 @@ sealed private class EmptyProxyChain extends ProxyChain {
 }
 
 @throws[IllegalArgumentException]("if proxy chain is empty")
-sealed private class ProxyChainImpl(val proxies: Seq[Proxy]) extends ProxyChain {
+sealed private class ProxyChainImpl(val proxies: Seq[Proxy], proxyConnectorFactory: ProxyConnectorFactory) extends ProxyChain {
 
   import ProxyChain._
 
@@ -131,7 +138,7 @@ sealed private class ProxyChainImpl(val proxies: Seq[Proxy]) extends ProxyChain 
 
   @inline
   private def connect(socket: SocketChannel, proxy: Proxy, destination: InetSocketAddress): SocketChannel = {
-    ProxyConnector(proxy).connect(socket, destination)
+    proxyConnectorFactory(proxy).connect(socket, destination)
   }
 
   private def tryConnect(socket: SocketChannel, proxy: Proxy, address: InetSocketAddress): SocketChannel = {
