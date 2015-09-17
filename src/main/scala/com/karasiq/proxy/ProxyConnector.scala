@@ -76,7 +76,7 @@ trait ProxyConnectorFactory {
 object ProxyConnector extends ProxyConnectorFactory {
   override protected val keyStore: TLSKeyStore = new TLSKeyStore()
 
-  override protected val certificateVerifier: TLSCertificateVerifier = new TLSCertificateVerifier()
+  override protected val certificateVerifier: TLSCertificateVerifier = TLSCertificateVerifier.fromTrustStore()
 
   private[proxy] def userInfoSeq(proxy: Option[Proxy]): Option[List[String]] = {
     proxy.flatMap(_.userInfo)
@@ -116,10 +116,10 @@ class TLSProxyConnector(protocol: String, keyStore: TLSKeyStore, certificateVeri
   override def connect(socket: SocketChannel, destination: InetSocketAddress): SocketChannel = {
     val keySetOption: Option[TLS.KeySet] = ProxyConnector.userInfoSeq(proxy) match {
       case Some(keyName :: password :: Nil) ⇒
-        Some(TLS.KeySet(keyStore, keyName, password))
+        Some(keyStore.getKeySet(keyName, password))
 
       case Some(keyName :: Nil) ⇒
-        Some(TLS.KeySet(keyStore, keyName))
+        Some(keyStore.getKeySet(keyName))
 
       case _ ⇒
         None
