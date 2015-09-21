@@ -14,6 +14,7 @@ import com.karasiq.parsers.socks.{SocksClient, SocksServer}
 import com.karasiq.tls.TLS.CertificateKey
 import com.karasiq.tls._
 import com.karasiq.tls.internal.TLSUtils
+import com.karasiq.tls.x509.CertificateVerifier
 import org.bouncycastle.crypto.tls.CertificateRequest
 
 import scala.concurrent.duration._
@@ -44,7 +45,7 @@ trait ProxyConnectorFactory {
   /**
    * TLS certificate verifier
    */
-  protected def certificateVerifier: TLSCertificateVerifier
+  protected def certificateVerifier: CertificateVerifier
 
   /**
    * Provides proxy connector for specified proxy and protocol
@@ -76,7 +77,7 @@ trait ProxyConnectorFactory {
 object ProxyConnector extends ProxyConnectorFactory {
   override protected val keyStore: TLSKeyStore = new TLSKeyStore()
 
-  override protected val certificateVerifier: TLSCertificateVerifier = TLSCertificateVerifier.fromTrustStore()
+  override protected val certificateVerifier: CertificateVerifier = CertificateVerifier.fromTrustStore()
 
   private[proxy] def userInfoSeq(proxy: Option[Proxy]): Option[List[String]] = {
     proxy.flatMap(_.userInfo)
@@ -91,7 +92,7 @@ object ProxyConnector extends ProxyConnectorFactory {
  * @param certificateVerifier TLS certificate verifier
  * @param proxy Proxy info
  */
-class TLSProxyConnector(protocol: String, keyStore: TLSKeyStore, certificateVerifier: TLSCertificateVerifier, proxy: Option[Proxy] = None) extends ProxyConnector {
+class TLSProxyConnector(protocol: String, keyStore: TLSKeyStore, certificateVerifier: CertificateVerifier, proxy: Option[Proxy] = None) extends ProxyConnector {
   private def stripProxy(proxy: Option[Proxy]): Option[Proxy] = {
     proxy.map { proxy ⇒
       new Proxy {

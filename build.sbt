@@ -1,8 +1,10 @@
 name := "proxyutils"
 
-organization := "com.karasiq"
+organization := "com.github.karasiq"
 
 version := "1.0"
+
+isSnapshot := false
 
 scalaVersion := "2.11.7"
 
@@ -13,9 +15,39 @@ libraryDependencies ++= Seq(
   "org.apache.httpcomponents" % "httpclient" % "4.3.3",
   "com.typesafe.akka" %% "akka-actor" % "2.3.11",
   "com.typesafe.akka" %% "akka-testkit" % "2.3.11" % "test",
-  "com.karasiq" %% "akka-commons" % "1.0",
-  "com.karasiq" %% "cryptoutils" % "1.1",
+  "com.github.karasiq" %% "akka-commons" % "1.0",
+  "com.github.karasiq" %% "cryptoutils" % "1.2",
   "org.scalatest" %% "scalatest" % "2.2.4" % "test"
 )
 
 scalacOptions ++= Seq("-optimize", "-deprecation", "-feature")
+
+publishMavenStyle := true
+
+publishTo := {
+  val nexus = "https://oss.sonatype.org/"
+  if (isSnapshot.value)
+    Some("snapshots" at nexus + "content/repositories/snapshots")
+  else
+    Some("releases" at nexus + "service/local/staging/deploy/maven2")
+}
+
+publishArtifact in Test := false
+
+pomIncludeRepository := { _ ⇒ false }
+
+licenses := Seq("Apache License, Version 2.0" → url("http://opensource.org/licenses/Apache-2.0"))
+
+homepage := Some(url("https://github.com/Karasiq/" + name.value))
+
+pomExtra := <scm>
+  <url>git@github.com:Karasiq/{name.value}.git</url>
+  <connection>scm:git:git@github.com:Karasiq/{name.value}.git</connection>
+</scm>
+  <developers>
+    <developer>
+      <id>karasiq</id>
+      <name>Piston Karasiq</name>
+      <url>https://github.com/Karasiq</url>
+    </developer>
+  </developers>
