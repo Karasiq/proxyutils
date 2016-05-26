@@ -2,6 +2,7 @@ package com.karasiq.parsers.http
 
 import java.net.InetSocketAddress
 
+import akka.util.ByteString
 import com.karasiq.networkutils.http.headers.{Host, HttpHeader}
 import com.karasiq.networkutils.url.URLParser
 
@@ -19,5 +20,7 @@ object HttpConnect {
     if (headers.exists(_.name == Host.name)) headers else headers ++ Seq(Host(address))
   }
 
-  def apply(address: InetSocketAddress, headers: Seq[HttpHeader]): Seq[Byte] = HttpRequest((HttpMethod.CONNECT, address.toString, withHostHeader(address, headers)))
+  def apply(address: InetSocketAddress, headers: Seq[HttpHeader]): ByteString = {
+    HttpRequest((HttpMethod.CONNECT, s"${address.getHostString}:${address.getPort}", withHostHeader(address, headers)))
+  }
 }

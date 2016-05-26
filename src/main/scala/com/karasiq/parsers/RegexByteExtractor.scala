@@ -9,7 +9,7 @@ final class RegexByteExtractor(r: Regex) {
     val str = ByteString(b.toArray).utf8String
     r.findFirstMatchIn(str) match {
       case Some(m) ⇒
-        Some(m → b.drop(m.group(0).length))
+        Some(m → ByteString(str.drop(m.group(0).length)))
 
       case _ ⇒
         None

@@ -2,21 +2,21 @@ package com.karasiq.parsers.http
 
 import akka.util.ByteString
 import com.karasiq.networkutils.http.headers.HttpHeader
-import com.karasiq.parsers.{BytePacket, RegexByteExtractor}
+import com.karasiq.parsers.{ByteFragment, RegexByteExtractor}
 
 object HttpMethod extends Enumeration {
   val GET, POST, PUT, PATCH, DELETE, CONNECT = Value
 }
 
-object HttpRequest extends BytePacket[(HttpMethod.Value, String, Seq[HttpHeader])] {
+object HttpRequest extends ByteFragment[(HttpMethod.Value, String, Seq[HttpHeader])] {
   private val regex = new RegexByteExtractor("""^([A-Z]+) ((?:https?://|)[^\s]+) HTTP/1\.[01]\r\n""".r)
 
-  override def fromBytes: PartialFunction[Seq[Byte], (HttpMethod.Value, String, Seq[HttpHeader])] = {
-    case regex(result, HttpHeaders(headers @ _*)) ⇒
-      (HttpMethod.withName(result.group(1)), result.group(2), headers)
+  override def fromBytes: Extractor = {
+    case regex(result, HttpHeaders(headers, rest)) ⇒
+      (HttpMethod.withName(result.group(1)), result.group(2), headers) → rest
   }
 
-  override def toBytes: PartialFunction[(HttpMethod.Value, String, Seq[HttpHeader]), Seq[Byte]] = {
+  override def toBytes(value: (HttpMethod.Value, String, Seq[HttpHeader])): ByteString = value match {
     case (method, address, headers) ⇒
       val connect = s"$method $address HTTP/1.1\r\n"
       ByteString(connect + HttpHeader.formatHeaders(headers) + "\r\n")

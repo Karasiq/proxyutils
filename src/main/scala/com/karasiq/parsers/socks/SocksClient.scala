@@ -4,7 +4,7 @@ import java.net.InetSocketAddress
 
 import akka.util.ByteString
 import com.karasiq.parsers._
-import com.karasiq.parsers.socks.internal._
+import com.karasiq.parsers.socks.internal.{NullTerminatedString, _}
 
 /**
  * Serializers for SOCKS client
@@ -76,18 +76,17 @@ object SocksClient {
     }
   }
 
-  object AuthRequest extends BytePacket[Seq[AuthMethod]] {
-    override def fromBytes: PartialFunction[Seq[Byte], Seq[AuthMethod]] = {
-      case SocksVersion(SocksVersion.SocksV5) :: authMethodsCount :: authMethods if authMethods.length == authMethodsCount.toInt ⇒
-        authMethods.collect {
+  object AuthRequest extends ByteFragment[Seq[AuthMethod]] {
+    override def fromBytes: Extractor = {
+      case SocksVersion(SocksVersion.SocksV5) +: authMethodsCount +: bytes ⇒
+        bytes.take(authMethodsCount).collect {
           case AuthMethod(method) ⇒
             method
-        }
+        } → bytes.drop(authMethodsCount)
     }
 
-    override def toBytes: PartialFunction[Seq[AuthMethod], Seq[Byte]] = {
-      case authMethods ⇒
-        ByteString(SocksVersion(SocksVersion.SocksV5), authMethods.length.toByte) ++ authMethods.map(_.code)
+    override def toBytes(authMethods: Seq[AuthMethod]): ByteString = {
+      ByteString(SocksVersion(SocksVersion.SocksV5), authMethods.length.toByte) ++ authMethods.map(_.code)
     }
   }
 
@@ -120,20 +119,20 @@ object SocksClient {
     }
   }
 
-  object ConnectionRequest extends BytePacket[(SocksVersion, Command, InetSocketAddress, String)] {
-    override def fromBytes: PartialFunction[Seq[Byte], (SocksVersion, Command, InetSocketAddress, String)] = {
-      case SocksVersion(SocksVersion.SocksV4) :: Command(command) :: Address.V4(address, NullTerminatedString(userId, _)) if command != Command.UdpAssociate ⇒
-        (SocksVersion.SocksV4, command, address, userId)
+  object ConnectionRequest extends ByteFragment[(SocksVersion, Command, InetSocketAddress, String)] {
+    override def fromBytes: Extractor = {
+      case SocksVersion(SocksVersion.SocksV4) +: Command(command) +: (Address.V4(address, NullTerminatedString(userId, rest))) if command != Command.UdpAssociate ⇒
+        (SocksVersion.SocksV4, command, address, userId) → rest
 
-      case SocksVersion(SocksVersion.SocksV5) :: Command(command) :: 0x00 :: Address.V5(address, _) ⇒
-        (SocksVersion.SocksV5, command, address, "")
+      case SocksVersion(SocksVersion.SocksV5) +: Command(command) +: 0x00 +: (Address.V5(address, rest)) ⇒
+        (SocksVersion.SocksV5, command, address, "") → rest
     }
 
     private def socks4a(address: InetSocketAddress, userId: String): ByteString = {
       Port(address.getPort) ++ Socks4AInvalidIP() ++ NullTerminatedString(userId) ++ NullTerminatedString(address.getHostString)
     }
 
-    override def toBytes: PartialFunction[(SocksVersion, Command, InetSocketAddress, String), Seq[Byte]] = {
+    override def toBytes(value: (SocksVersion, Command, InetSocketAddress, String)): ByteString = value match {
       case (socksVersion, command, address, userId) ⇒
         val head = ByteString(SocksVersion(socksVersion), command.code, 0x00)
         val parameters = socksVersion match {
@@ -150,13 +149,13 @@ object SocksClient {
     }
   }
 
-  object UsernameAuthRequest extends BytePacket[(String, String)] {
-    override def fromBytes: PartialFunction[Seq[Byte], (String, String)] = {
-      case 0x01 :: LengthString(username, LengthString(password, _)) ⇒
-        username → password
+  object UsernameAuthRequest extends ByteFragment[(String, String)] {
+    override def fromBytes: Extractor = {
+      case 0x01 +: (LengthString(username, LengthString(password, rest))) ⇒
+        (username, password) → rest
     }
 
-    override def toBytes: PartialFunction[(String, String), Seq[Byte]] = {
+    override def toBytes(value: (String, String)): ByteString = value match {
       case (username, password) ⇒
         ByteString(0x01) ++ LengthString(username) ++ LengthString(password)
     }

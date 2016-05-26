@@ -10,29 +10,27 @@ import scala.language.implicitConversions
  * Generic bytes serializer/deserializer
  * @tparam T Result type
  */
-trait BytePacket[T] {
-  def fromBytes: PartialFunction[Seq[Byte], T]
+trait ByteFragment[T] {
+  final type Extractor = PartialFunction[Seq[Byte], (T, Seq[Byte])]
 
-  def toBytes: PartialFunction[T, Seq[Byte]]
+  def fromBytes: Extractor
 
-  final def unapply(bytes: Seq[Byte]): Option[T] = {
-    lazy val asList = bytes.toList
+  def toBytes(value: T): ByteString
+
+  final def unapply(bytes: Seq[Byte]): Option[(T, Seq[Byte])] = {
     bytes match {
       case bs if fromBytes.isDefinedAt(bs) ⇒
         Some(fromBytes(bs))
-
-      case _ if fromBytes.isDefinedAt(asList) ⇒ // List matchers workaround
-        Some(fromBytes(asList))
 
       case _ ⇒
         None
     }
   }
 
-  final def apply(t: T): Seq[Byte] = toBytes(t)
+  final def apply(t: T): ByteString = toBytes(t)
 }
 
-object BytePacket {
+object ByteFragment {
   def wrap(f: ⇒ ByteBuffer): ByteString = {
     val buffer = f
     buffer.flip()

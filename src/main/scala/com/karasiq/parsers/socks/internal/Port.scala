@@ -1,14 +1,14 @@
 package com.karasiq.parsers.socks.internal
 
 import akka.util.ByteString
-import com.karasiq.parsers.{BytePacket, BytePacketFragment}
+import com.karasiq.parsers.ByteFragment
 
-private[socks] object Port extends BytePacketFragment[Int] {
-  override def toBytes: PartialFunction[Int, Seq[Byte]] = {
-    case p ⇒ BytePacket.create(2)(_.putShort(p.toShort))
+private[socks] object Port extends ByteFragment[Int] {
+  override def toBytes(port: Int): ByteString = {
+    ByteFragment.create(2)(_.putShort(port.toShort))
   }
 
-  override def fromBytes: PartialFunction[Seq[Byte], (Int, Seq[Byte])] = {
+  override def fromBytes: Extractor = {
     case bytes if bytes.length >= 2 ⇒
       readPort(bytes) → bytes.drop(2)
   }

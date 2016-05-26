@@ -6,7 +6,7 @@ import akka.util.ByteString
 import com.karasiq.parsers.socks.SocksClient.SocksVersion.SocksV5
 import com.karasiq.parsers.socks.SocksClient.{AuthMethod, SocksVersion}
 import com.karasiq.parsers.socks.internal.Address
-import com.karasiq.parsers.{BytePacket, ParserException}
+import com.karasiq.parsers.{ByteFragment, ParserException}
 
 import scala.language.implicitConversions
 
@@ -19,12 +19,16 @@ object SocksServer {
   /**
    * Server auth method selection
    */
-  object AuthMethodResponse extends BytePacket[AuthMethod] {
-    override def fromBytes: PartialFunction[Seq[Byte], AuthMethod] = AuthStatusResponse.fromBytes.andThen(AuthMethod.apply)
+  object AuthMethodResponse extends ByteFragment[AuthMethod] {
+    override def fromBytes: Extractor = {
+      AuthStatusResponse.fromBytes.andThen {
+        case (status, rest) ⇒
+          AuthMethod(status) → rest
+      }
+    }
 
-    override def toBytes: PartialFunction[AuthMethod, Seq[Byte]] = {
-      case m: AuthMethod ⇒
-        ByteString(SocksV5.code, m.code)
+    override def toBytes(value: AuthMethod): ByteString = {
+      ByteString(SocksV5.code, value.code)
     }
 
     /**
@@ -36,32 +40,32 @@ object SocksServer {
   /**
    * Server authentication status
    */
-  object AuthStatusResponse extends BytePacket[Byte] {
-    override def fromBytes: PartialFunction[Seq[Byte], Byte] = {
-      case SocksVersion(SocksVersion.SocksV5) :: statusCode :: _ ⇒
-        statusCode
+  object AuthStatusResponse extends ByteFragment[Byte] {
+    override def fromBytes: Extractor = {
+      case SocksVersion(SocksVersion.SocksV5) +: statusCode +: rest ⇒
+        statusCode → rest
     }
 
-    override def toBytes: PartialFunction[Byte, Seq[Byte]] = {
-      case b: Byte ⇒ ByteString(b)
+    override def toBytes(value: Byte): ByteString = {
+      ByteString(value)
     }
   }
 
   /**
    * Server connection response
    */
-  object ConnectionStatusResponse extends BytePacket[(SocksVersion, Option[InetSocketAddress], ConnectionStatus)] {
-    override def fromBytes: PartialFunction[Seq[Byte], (SocksVersion, Option[InetSocketAddress], ConnectionStatus)] = {
+  object ConnectionStatusResponse extends ByteFragment[(SocksVersion, Option[InetSocketAddress], ConnectionStatus)] {
+    override def fromBytes: Extractor  = {
       // SOCKS5
-      case SocksVersion(v @ SocksVersion.SocksV5) :: ConnectionStatus(status: ConnectionSuccess) :: 0x00 :: Address.V5(address, _) ⇒
-        (v, Some(address), status)
+      case SocksVersion(v @ SocksVersion.SocksV5) +: ConnectionStatus(status: ConnectionSuccess) +: 0x00 +: (Address.V5(address, rest)) ⇒
+        (v, Some(address), status) → rest
 
-      case SocksVersion(v @ SocksVersion.SocksV5) :: ConnectionStatus(status) :: 0x00 :: _ ⇒
-        (v, None, status)
+      case SocksVersion(v @ SocksVersion.SocksV5) +: ConnectionStatus(status) +: 0x00 +: rest ⇒
+        (v, None, status) → rest
 
       // SOCKS4
-      case 0x00 :: ConnectionStatus(status) :: _ ⇒
-        (SocksVersion.SocksV4, None, status)
+      case 0x00 +: ConnectionStatus(status) +: rest ⇒
+        (SocksVersion.SocksV4, None, status) → rest
     }
 
     private def emptyAddress: ByteString = ByteString(
@@ -70,7 +74,7 @@ object SocksServer {
       0x00, 0x00 // Port
     )
 
-    override def toBytes: PartialFunction[(SocksVersion, Option[InetSocketAddress], ConnectionStatus), Seq[Byte]] = {
+    override def toBytes(value: (SocksVersion, Option[InetSocketAddress], ConnectionStatus)): ByteString = value match {
       case (version, address, status) ⇒
         version match {
           // SOCKS5

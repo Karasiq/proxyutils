@@ -4,7 +4,7 @@ import akka.util.ByteString
 import com.karasiq.networkutils.http.headers.HttpHeader
 
 private[http] object HttpHeaders {
-  private def asByteString(b: Seq[Byte]) = ByteString(b.toArray)
+  private def asByteString(b: Seq[Byte]) = ByteString(b:_*)
 
   private def headersEnd: String = "\r\n\r\n"
 
@@ -12,11 +12,11 @@ private[http] object HttpHeaders {
     case HttpHeader(header) ⇒ header
   }
 
-  def unapplySeq(b: Seq[Byte]): Option[Seq[HttpHeader]] = {
-    asByteString(b).utf8String.split(headersEnd, 2).toList match {
-      case h :: _ ⇒
+  def unapply(b: Seq[Byte]): Option[(Seq[HttpHeader], Seq[Byte])] = {
+    asByteString(b).utf8String.split(headersEnd, 2).toSeq match {
+      case h +: rest ⇒
         val headers = h.lines.collect(asHeader).toVector
-        Some(headers)
+        Some(headers → ByteString(rest.mkString))
 
       case _ ⇒
         None
