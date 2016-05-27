@@ -2,7 +2,7 @@ name := "proxyutils"
 
 organization := "com.github.karasiq"
 
-version := "2.0.1-SNAPSHOT"
+version := "2.0.1"
 
 isSnapshot := version.value.endsWith("SNAPSHOT")
 

@@ -22,6 +22,7 @@ class ProxyChainTest extends FlatSpec with Matchers {
   implicit val timeout = Timeout(1 minute)
   implicit val actorSystem = ActorSystem("proxy-chain-test")
   implicit val materializer = ActorMaterializer.create(actorSystem)
+  import actorSystem.dispatcher
 
   val config = ConfigFactory.load().getConfig("karasiq.proxy-chain-test")
 

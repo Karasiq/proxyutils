@@ -13,7 +13,7 @@ import com.karasiq.proxy.client.{HttpProxyClientStage, SocksProxyClientStage}
 import com.typesafe.config.{Config, ConfigException}
 
 import scala.annotation.tailrec
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 import scala.language.{implicitConversions, postfixOps}
 import scala.util.Random
 
@@ -39,12 +39,12 @@ object ProxyChain {
     })
   }
 
-  def connect(destination: InetSocketAddress, proxies: Proxy*)(implicit as: ActorSystem): Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])] = {
+  def connect(destination: InetSocketAddress, proxies: Proxy*)(implicit as: ActorSystem, ec: ExecutionContext): Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])] = {
     val address = proxies.headOption.fold(destination)(_.toInetSocketAddress)
     createFlow(Tcp().outgoingConnection(address), destination, proxies:_*)
   }
 
-  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Proxy*): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
+  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Proxy*)(implicit ec: ExecutionContext): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
     val flowWithDone = flow.mapMaterializedValue(_ → Future.successful(Done))
     if (proxies.isEmpty) flowWithDone
     else {
@@ -63,7 +63,10 @@ object ProxyChain {
             case _ ⇒
               throw new IllegalArgumentException
           }
-          val connectedFlow = Flow.fromGraph(GraphDSL.create(flow, proxyStage(address, proxy))(_._1 → _) { implicit b ⇒ (connection, stage) ⇒
+          val connectedFlow = Flow.fromGraph(GraphDSL.create(flow, proxyStage(address, proxy)) {
+            case ((mat, ps1), ps2) ⇒
+              mat → ps1.flatMap(_ ⇒ ps2)
+          } { implicit b ⇒ (connection, stage) ⇒
             import GraphDSL.Implicits._
             connection.out ~> stage.in1
             stage.out1 ~> connection.in
