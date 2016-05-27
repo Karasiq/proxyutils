@@ -9,7 +9,7 @@ import org.scalatest.{FlatSpec, Matchers}
 class HttpConnectRfcTest extends FlatSpec with Matchers {
   "HTTP CONNECT parser" should "parse request" in {
     ByteString("CONNECT host.com:443 HTTP/1.1\r\nHost: host.com\r\nTest-header: test\r\n\r\n") match {
-      case HttpRequest((method, url, headers), _) ⇒
+      case HttpRequest((method, url, headers), Nil) ⇒
         url shouldBe "host.com:443"
         headers.toList shouldBe List(HttpHeader("Host: host.com"), HttpHeader("Test-header: test"))
     }
@@ -17,7 +17,7 @@ class HttpConnectRfcTest extends FlatSpec with Matchers {
 
   it should "parse response" in {
     ByteString("HTTP/1.1 123 Test message\r\nTest-header: header\r\n\r\n") match {
-      case HttpResponse((status, headers), _) ⇒
+      case HttpResponse((status, headers), Nil) ⇒
         status shouldBe HttpStatus(123, "Test message")
         headers.toList shouldBe List(HttpHeader("Test-header: header"))
     }

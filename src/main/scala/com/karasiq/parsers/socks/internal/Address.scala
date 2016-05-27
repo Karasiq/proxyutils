@@ -103,7 +103,7 @@ private[socks] object Address {
     }
   }
 
-  def apply(version: SocksVersion, address: InetSocketAddress): Seq[Byte] = version match {
+  def apply(version: SocksVersion, address: InetSocketAddress): ByteString = version match {
     case SocksVersion.SocksV4 ⇒ this.V4(address)
     case SocksVersion.SocksV5 ⇒ this.V5(address)
   }

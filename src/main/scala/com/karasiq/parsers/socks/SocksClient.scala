@@ -122,7 +122,7 @@ object SocksClient {
   object ConnectionRequest extends ByteFragment[(SocksVersion, Command, InetSocketAddress, String)] {
     override def fromBytes: Extractor = {
       case SocksVersion(SocksVersion.SocksV4) +: Command(command) +: (Address.V4(address, NullTerminatedString(userId, rest))) if command != Command.UdpAssociate ⇒
-        (SocksVersion.SocksV4, command, address, userId) → rest
+        (SocksVersion.SocksV4, command, address, userId) → (if (address.isUnresolved) rest.drop(address.getHostString.length + 1) else rest)
 
       case SocksVersion(SocksVersion.SocksV5) +: Command(command) +: 0x00 +: (Address.V5(address, rest)) ⇒
         (SocksVersion.SocksV5, command, address, "") → rest

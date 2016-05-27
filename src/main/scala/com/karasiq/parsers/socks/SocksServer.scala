@@ -64,7 +64,7 @@ object SocksServer {
         (v, None, status) → rest
 
       // SOCKS4
-      case 0x00 +: ConnectionStatus(status) +: rest ⇒
+      case 0x00 +: ConnectionStatus(status) +: _ +: _ +: _ +: _ +: _ +: _ +: rest ⇒
         (SocksVersion.SocksV4, None, status) → rest
     }
 
