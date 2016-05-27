@@ -2,7 +2,7 @@ package com.karasiq.proxy
 
 import java.net.InetSocketAddress
 
-import akka.NotUsed
+import akka.Done
 import akka.actor.ActorSystem
 import akka.stream.FlowShape
 import akka.stream.scaladsl.{BidiFlow, Flow, GraphDSL, Tcp}
@@ -10,7 +10,7 @@ import akka.util.ByteString
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.socks.SocksClient.SocksVersion
 import com.karasiq.proxy.client.{HttpProxyClientStage, SocksProxyClientStage}
-import com.typesafe.config.Config
+import com.typesafe.config.{Config, ConfigException}
 
 import scala.annotation.tailrec
 import scala.concurrent.Future
@@ -23,7 +23,7 @@ object ProxyChain {
     Proxy(if (s.contains("://")) s else s"http://$s")
   }
 
-  private def proxyStage(address: InetSocketAddress, proxy: Proxy): BidiFlow[ByteString, ByteString, ByteString, ByteString, NotUsed] = {
+  private def proxyStage(address: InetSocketAddress, proxy: Proxy): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
     BidiFlow.fromGraph(proxy.scheme.toLowerCase match {
       case "socks4" | "socks4a" ⇒
         new SocksProxyClientStage(address, SocksVersion.SocksV4, Some(proxy))
@@ -39,16 +39,17 @@ object ProxyChain {
     })
   }
 
-  def connect(destination: InetSocketAddress, proxies: Proxy*)(implicit as: ActorSystem): Flow[ByteString, ByteString, Future[Tcp.OutgoingConnection]] = {
+  def connect(destination: InetSocketAddress, proxies: Proxy*)(implicit as: ActorSystem): Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])] = {
     val address = proxies.headOption.fold(destination)(_.toInetSocketAddress)
     createFlow(Tcp().outgoingConnection(address), destination, proxies:_*)
   }
 
-  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Proxy*): Flow[ByteString, ByteString, Mat] = {
-    if (proxies.isEmpty) flow
+  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Proxy*): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
+    val flowWithDone = flow.mapMaterializedValue(_ → Future.successful(Done))
+    if (proxies.isEmpty) flowWithDone
     else {
       @tailrec
-      def connect(flow: Flow[ByteString, ByteString, Mat], proxies: Seq[Proxy]): Flow[ByteString, ByteString, Mat] = {
+      def connect(flow: Flow[ByteString, ByteString, (Mat, Future[Done])], proxies: Seq[Proxy]): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
         if (proxies.isEmpty) {
           flow
         } else {
@@ -62,9 +63,8 @@ object ProxyChain {
             case _ ⇒
               throw new IllegalArgumentException
           }
-          val connectedFlow = Flow.fromGraph(GraphDSL.create(flow) { implicit b ⇒ connection ⇒
+          val connectedFlow = Flow.fromGraph(GraphDSL.create(flow, proxyStage(address, proxy))(_._1 → _) { implicit b ⇒ (connection, stage) ⇒
             import GraphDSL.Implicits._
-            val stage = b.add(proxyStage(address, proxy))
             connection.out ~> stage.in1
             stage.out1 ~> connection.in
             FlowShape(stage.in2, stage.out2)
@@ -72,7 +72,7 @@ object ProxyChain {
           connect(connectedFlow, proxies.tail)
         }
       }
-      connect(flow, proxies)
+      connect(flowWithDone, proxies)
     }
   }
 
@@ -87,9 +87,8 @@ object ProxyChain {
     createChain(proxies.map(proxyFromString), config.getBoolean("randomize"), config.getInt("hops"))
   }
 
-  @throws[IllegalArgumentException]("if invalid config provided")
-  final def fromConfig(flow: Flow[ByteString, ByteString, NotUsed], destination: InetSocketAddress, config: Config): Flow[ByteString, ByteString, NotUsed] = {
-    val chain: Seq[Proxy] = Seq(config.getConfig("entry"), config.getConfig("middle"), config.getConfig("exit")).flatMap(selectProxies)
-    createFlow(flow, destination, chain: _*)
+  @throws[ConfigException]("if invalid config provided")
+  def chainFromConfig(config: Config): Seq[Proxy] = {
+    Seq(config.getConfig("entry"), config.getConfig("middle"), config.getConfig("exit")).flatMap(selectProxies)
   }
 }

@@ -1,8 +1,9 @@
 import java.net.{InetSocketAddress, URI}
 
+import akka.Done
 import akka.actor._
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Flow, Source, Tcp}
+import akka.stream.scaladsl.{Flow, Keep, Source, Tcp}
 import akka.stream.testkit.scaladsl.TestSink
 import akka.util.{ByteString, Timeout}
 import com.karasiq.networkutils.http.headers.HttpHeader
@@ -44,12 +45,15 @@ class ProxyChainTest extends FlatSpec with Matchers {
     assert(response.startsWith(config.getString("ok-status")))
   }
 
-  private def readFrom(flow: Flow[ByteString, ByteString, Future[Tcp.OutgoingConnection]]): Unit = {
+  private def readFrom(flow: Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])]): Unit = {
     val request = HttpRequest((HttpMethod.GET, testUrl, Seq(HttpHeader("Host" → testHost.getHostString))))
-    val probe = Source
+    val ((connection, proxyConnection), probe) = Source
       .single(request)
-      .via(flow)
-      .runWith(TestSink.probe)
+      .viaMat(flow)(Keep.right)
+      .toMat(TestSink.probe)(Keep.both)
+      .run()
+    // println(Await.result(connection, Duration.Inf))
+    // println(Await.result(proxyConnection, Duration.Inf))
     checkResponse(probe.requestNext())
     probe.cancel()
   }
