@@ -4,8 +4,10 @@ import java.net.InetSocketAddress
 
 import akka.Done
 import akka.actor.ActorSystem
-import akka.stream.FlowShape
-import akka.stream.scaladsl.{BidiFlow, Flow, GraphDSL, Tcp}
+import akka.http.scaladsl.HttpsConnectionContext
+import akka.stream.TLSProtocol.{SendBytes, SessionBytes, SslTlsInbound}
+import akka.stream.scaladsl.{BidiFlow, Flow, GraphDSL, Keep, TLS, Tcp}
+import akka.stream.{BidiShape, FlowShape, TLSRole}
 import akka.util.ByteString
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.socks.SocksClient.SocksVersion
@@ -23,28 +25,46 @@ object ProxyChain {
     Proxy(if (s.contains("://")) s else s"http://$s")
   }
 
-  private def proxyStage(address: InetSocketAddress, proxy: Proxy): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
-    BidiFlow.fromGraph(proxy.scheme.toLowerCase match {
-      case "socks4" | "socks4a" ⇒
-        new SocksProxyClientStage(address, SocksVersion.SocksV4, Some(proxy))
+  private def proxyStage(address: InetSocketAddress, proxy: Proxy, tlsContext: Option[HttpsConnectionContext] = None): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
+    def plain(scheme: String) = {
+      scheme.toLowerCase match {
+        case "socks4" | "socks4a" ⇒
+          new SocksProxyClientStage(address, SocksVersion.SocksV4, Some(proxy))
 
-      case "socks5" | "socks" ⇒
-        new SocksProxyClientStage(address, SocksVersion.SocksV5, Some(proxy))
+        case "socks5" | "socks" ⇒
+          new SocksProxyClientStage(address, SocksVersion.SocksV5, Some(proxy))
 
-      case "http" | "https" ⇒
-        new HttpProxyClientStage(address, Some(proxy))
+        case "http" | "https" ⇒
+          new HttpProxyClientStage(address, Some(proxy))
 
-      case scheme ⇒
-        throw new IllegalArgumentException(s"Unknown proxy protocol: $scheme")
-    })
+        case _ ⇒
+          throw new IllegalArgumentException(s"Unknown proxy protocol: $scheme")
+      }
+    }
+
+    BidiFlow.fromGraph {
+      if (proxy.scheme.startsWith("tls-") && tlsContext.nonEmpty) {
+        val tls = TLS(tlsContext.get.sslContext, tlsContext.get.firstSession, TLSRole.client, hostInfo = Some(proxy.host → proxy.port))
+        BidiFlow.fromGraph(GraphDSL.create(plain(proxy.scheme.split("tls-", 2).last), tls)(Keep.left) { implicit builder ⇒ (connection, tls) ⇒
+          import GraphDSL.Implicits._
+          val bytesIn = builder.add(Flow[SslTlsInbound].collect { case SessionBytes(_, bytes) ⇒ bytes })
+          val bytesOut = builder.add(Flow[ByteString].map(SendBytes(_)))
+          connection.out1 ~> bytesOut ~> tls.in1
+          tls.out2 ~> bytesIn ~> connection.in1
+          BidiShape(tls.in2, tls.out1, connection.in2, connection.out2)
+        })
+      } else {
+        plain(proxy.scheme)
+      }
+    }
   }
 
-  def connect(destination: InetSocketAddress, proxies: Proxy*)(implicit as: ActorSystem, ec: ExecutionContext): Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])] = {
+  def connect(destination: InetSocketAddress, proxies: Seq[Proxy], tlsContext: Option[HttpsConnectionContext] = None)(implicit as: ActorSystem, ec: ExecutionContext): Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])] = {
     val address = proxies.headOption.fold(destination)(_.toInetSocketAddress)
-    createFlow(Tcp().outgoingConnection(address), destination, proxies:_*)
+    createFlow(Tcp().outgoingConnection(address), destination, proxies, tlsContext)
   }
 
-  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Proxy*)(implicit ec: ExecutionContext): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
+  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Seq[Proxy], tlsContext: Option[HttpsConnectionContext] = None)(implicit ec: ExecutionContext): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
     val flowWithDone = flow.mapMaterializedValue(_ → Future.successful(Done))
     if (proxies.isEmpty) flowWithDone
     else {
@@ -63,7 +83,7 @@ object ProxyChain {
             case _ ⇒
               throw new IllegalArgumentException
           }
-          val connectedFlow = Flow.fromGraph(GraphDSL.create(flow, proxyStage(address, proxy)) {
+          val connectedFlow = Flow.fromGraph(GraphDSL.create(flow, proxyStage(address, proxy, tlsContext)) {
             case ((mat, ps1), ps2) ⇒
               mat → ps1.flatMap(_ ⇒ ps2)
           } { implicit b ⇒ (connection, stage) ⇒

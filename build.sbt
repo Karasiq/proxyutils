@@ -2,13 +2,15 @@ name := "proxyutils"
 
 organization := "com.github.karasiq"
 
-version := "2.0.2"
+version := "2.0.3"
 
 isSnapshot := version.value.endsWith("SNAPSHOT")
 
 scalaVersion := "2.11.8"
 
 resolvers += "softprops-maven" at "http://dl.bintray.com/content/softprops/maven"
+
+resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies ++= {
   val akkaV = "2.4.6"
@@ -17,10 +19,11 @@ libraryDependencies ++= {
     "org.apache.httpcomponents" % "httpclient" % "4.3.3",
     "com.typesafe.akka" %% "akka-actor" % akkaV,
     "com.typesafe.akka" %% "akka-stream" % akkaV,
+    "com.typesafe.akka" %% "akka-http-experimental" % akkaV,
     "com.typesafe.akka" %% "akka-stream-testkit" % akkaV % "test",
     "com.typesafe.akka" %% "akka-testkit" % akkaV % "test",
     "com.github.karasiq" %% "akka-commons" % "1.0",
-    "com.github.karasiq" %% "cryptoutils" % "1.2",
+    "com.github.karasiq" %% "cryptoutils" % "1.4.0",
     "org.scalatest" %% "scalatest" % "2.2.4" % "test"
   )
 }

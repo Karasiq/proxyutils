@@ -1,7 +1,10 @@
 import java.net.{InetSocketAddress, URI}
+import java.security.SecureRandom
+import javax.net.ssl.{KeyManagerFactory, SSLContext, TrustManagerFactory}
 
 import akka.Done
 import akka.actor._
+import akka.http.scaladsl.{ConnectionContext, HttpsConnectionContext}
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Flow, Keep, Source, Tcp}
 import akka.stream.testkit.scaladsl.TestSink
@@ -10,6 +13,7 @@ import com.karasiq.networkutils.http.headers.HttpHeader
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.http.{HttpMethod, HttpRequest}
 import com.karasiq.proxy._
+import com.karasiq.tls.TLSKeyStore
 import com.typesafe.config.ConfigFactory
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -40,6 +44,19 @@ class ProxyChainTest extends FlatSpec with Matchers {
       .map(url ⇒ Proxy(url))
   }
 
+  def tlsContext: HttpsConnectionContext = {
+    val keyStore = TLSKeyStore()
+    val sslContext = SSLContext.getInstance("TLS")
+    val keyManagerFactory: KeyManagerFactory = KeyManagerFactory.getInstance("SunX509")
+    keyManagerFactory.init(keyStore.keyStore, keyStore.password.toCharArray)
+
+    val trustManagerFactory: TrustManagerFactory = TrustManagerFactory.getInstance("SunX509")
+    trustManagerFactory.init(keyStore.keyStore)
+    sslContext.init(keyManagerFactory.getKeyManagers, trustManagerFactory.getTrustManagers, SecureRandom.getInstanceStrong)
+
+    ConnectionContext.https(sslContext)
+  }
+
   private def checkResponse(bytes: ByteString): Unit = {
     val response = bytes.utf8String
     println(response)
@@ -53,23 +70,27 @@ class ProxyChainTest extends FlatSpec with Matchers {
       .viaMat(flow)(Keep.right)
       .toMat(TestSink.probe)(Keep.both)
       .run()
-    // println(Await.result(connection, Duration.Inf))
-    // println(Await.result(proxyConnection, Duration.Inf))
     checkResponse(probe.requestNext())
     probe.cancel()
   }
 
   "Stream connector" should "connect to HTTP proxy" in {
     val Some(proxy) = testProxies.find(_.scheme == "http")
-    readFrom(ProxyChain.connect(testHost, proxy))
+    readFrom(ProxyChain.connect(testHost, Seq(proxy)))
   }
+
 
   it should "connect to SOCKS proxy" in {
     val Some(proxy) = testProxies.find(_.scheme == "socks")
-    readFrom(ProxyChain.connect(testHost, proxy))
+    readFrom(ProxyChain.connect(testHost, Seq(proxy)))
+  }
+
+  it should "connect to TLS-SOCKS proxy" in {
+    val Some(proxy) = testProxies.find(_.scheme == "tls-socks")
+    readFrom(ProxyChain.connect(testHost, Seq(proxy), Some(tlsContext)))
   }
 
   it should "connect through proxy chain" in {
-    readFrom(ProxyChain.connect(testHost, testProxies:_*))
+    readFrom(ProxyChain.connect(testHost, testProxies, Some(tlsContext)))
   }
 }
