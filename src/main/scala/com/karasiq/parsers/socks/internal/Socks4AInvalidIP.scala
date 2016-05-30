@@ -4,7 +4,7 @@ import akka.util.ByteString
 import com.karasiq.parsers.ByteFragment
 
 private[socks] object Socks4AInvalidIP extends ByteFragment[Seq[Byte]] {
-  def apply(): Seq[Byte] = ByteString(0x00, 0x00, 0x00, 0x01)
+  def apply(): ByteString = ByteString(0x00, 0x00, 0x00, 0x01)
 
   override def toBytes(value: Seq[Byte]): ByteString = {
     ByteString(value:_*)

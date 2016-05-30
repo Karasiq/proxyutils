@@ -14,10 +14,10 @@ import com.karasiq.proxy.ProxyException
 import scala.concurrent.{Future, Promise}
 
 class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersion = SocksVersion.SocksV5, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
-  val input = Inlet[ByteString]("tcp-input")
-  val output = Outlet[ByteString]("tcp-output")
-  val proxyInput = Inlet[ByteString]("socks-input")
-  val proxyOutput = Outlet[ByteString]("socks-output")
+  val input = Inlet[ByteString]("SocksProxyClient.tcpIn")
+  val output = Outlet[ByteString]("SocksProxyClient.tcpOut")
+  val proxyInput = Inlet[ByteString]("SocksProxyClient.dataIn")
+  val proxyOutput = Outlet[ByteString]("SocksProxyClient.dataOut")
 
   def shape = BidiShape(input, output, proxyInput, proxyOutput)
 
@@ -54,7 +54,7 @@ class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersio
 
       def writeBuffer(data: ByteString): Unit = {
         if (buffer.length + data.length > maxBufferSize) {
-          failStage(new ProxyException("Socks TCP buffer overflow"))
+          failStage(BufferOverflowException("Socks TCP buffer overflow"))
         } else {
           buffer ++= data
         }

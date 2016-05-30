@@ -3,8 +3,8 @@ package com.karasiq.proxy.client
 import java.net.InetSocketAddress
 
 import akka.Done
+import akka.stream._
 import akka.stream.stage._
-import akka.stream.{Attributes, BidiShape, Inlet, Outlet}
 import akka.util.ByteString
 import com.karasiq.networkutils.http.headers.{HttpHeader, `Proxy-Authorization`}
 import com.karasiq.networkutils.proxy.Proxy
@@ -14,10 +14,10 @@ import com.karasiq.proxy.ProxyException
 import scala.concurrent.{Future, Promise}
 
 class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
-  val input = Inlet[ByteString]("tcp-input")
-  val output = Outlet[ByteString]("tcp-output")
-  val proxyInput = Inlet[ByteString]("proxy-input")
-  val proxyOutput = Outlet[ByteString]("proxy-output")
+  val input = Inlet[ByteString]("HttpProxyClient.tcpIn")
+  val output = Outlet[ByteString]("HttpProxyClient.tcpOut")
+  val proxyInput = Inlet[ByteString]("HttpProxyClient.dataIn")
+  val proxyOutput = Outlet[ByteString]("HttpProxyClient.dataOut")
 
   def shape = BidiShape(input, output, proxyInput, proxyOutput)
 
@@ -49,7 +49,7 @@ class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[Proxy] 
           } else {
             buffer ++= data
             if (buffer.length > bufferSize) {
-              failStage(new ProxyException("HTTP proxy headers size limit reached"))
+              failStage(BufferOverflowException("HTTP proxy headers size limit reached"))
             }
             val headersEnd = buffer.indexOfSlice(terminator)
             if (headersEnd != -1) {

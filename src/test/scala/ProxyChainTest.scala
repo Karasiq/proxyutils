@@ -15,14 +15,14 @@ import com.karasiq.parsers.http.{HttpMethod, HttpRequest}
 import com.karasiq.proxy._
 import com.karasiq.tls.TLSKeyStore
 import com.typesafe.config.ConfigFactory
-import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.{BeforeAndAfterAll, FlatSpec, Matchers}
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
 // You need to have running proxies to run this test
-class ProxyChainTest extends FlatSpec with Matchers {
+class ProxyChainTest extends FlatSpec with Matchers with BeforeAndAfterAll {
   implicit val timeout = Timeout(1 minute)
   implicit val actorSystem = ActorSystem("proxy-chain-test")
   implicit val materializer = ActorMaterializer.create(actorSystem)
@@ -55,6 +55,11 @@ class ProxyChainTest extends FlatSpec with Matchers {
     sslContext.init(keyManagerFactory.getKeyManagers, trustManagerFactory.getTrustManagers, SecureRandom.getInstanceStrong)
 
     ConnectionContext.https(sslContext)
+  }
+
+  override protected def afterAll() = {
+    actorSystem.terminate()
+    super.afterAll()
   }
 
   private def checkResponse(bytes: ByteString): Unit = {

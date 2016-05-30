@@ -134,18 +134,17 @@ object SocksClient {
 
     override def toBytes(value: (SocksVersion, Command, InetSocketAddress, String)): ByteString = value match {
       case (socksVersion, command, address, userId) ⇒
-        val head = ByteString(SocksVersion(socksVersion), command.code, 0x00)
-        val parameters = socksVersion match {
+        val head = ByteString(SocksVersion(socksVersion), command.code)
+        socksVersion match {
           case SocksVersion.SocksV4 if address.isUnresolved ⇒ // SOCKS4A
-            socks4a(address, userId)
+            head ++ socks4a(address, userId)
 
           case v @ SocksVersion.SocksV4 ⇒ // SOCKS4
-            Address(v, address) ++ NullTerminatedString(userId)
+            head ++ Address(v, address) ++ NullTerminatedString(userId)
 
           case v @ SocksVersion.SocksV5 ⇒ // SOCKS5
-            Address(v, address)
+            head ++ ByteString(0) ++ Address(v, address)
         }
-        head ++ parameters
     }
   }
 
