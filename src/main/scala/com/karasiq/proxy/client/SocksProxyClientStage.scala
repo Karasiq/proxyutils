@@ -110,13 +110,13 @@ final class SocksProxyClientStage(destination: InetSocketAddress, version: Socks
                 buffer = ByteString(rest:_*)
                 def connectionEstablished(): Unit = {
                   setHandler(input, new InHandler {
-                    def onPush() = push(proxyOutput, grab(input))
+                    def onPush() = emit(proxyOutput, grab(input), () ⇒ if (!hasBeenPulled(input)) tryPull(input))
                   })
                   setHandler(output, new OutHandler {
                     def onPull() = if (!hasBeenPulled(proxyInput)) tryPull(proxyInput)
                   })
                   setHandler(proxyInput, new InHandler {
-                    def onPush() = push(output, grab(proxyInput))
+                    def onPush() = emit(output, grab(proxyInput), () ⇒ if (!hasBeenPulled(proxyInput)) tryPull(proxyInput))
                     override def onUpstreamFinish() = ()
                   })
                   setHandler(proxyOutput, new OutHandler {

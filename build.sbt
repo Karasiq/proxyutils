@@ -2,7 +2,7 @@ name := "proxyutils"
 
 organization := "com.github.karasiq"
 
-version := "2.0.6"
+version := "2.0.7-SNAPSHOT"
 
 isSnapshot := version.value.endsWith("SNAPSHOT")
 
@@ -10,7 +10,7 @@ scalaVersion := "2.11.8"
 
 resolvers += "softprops-maven" at "http://dl.bintray.com/content/softprops/maven"
 
-// resolvers += Resolver.sonatypeRepo("snapshots")
+resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies ++= {
   val akkaV = "2.4.6"

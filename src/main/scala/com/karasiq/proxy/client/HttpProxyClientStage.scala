@@ -45,13 +45,13 @@ final class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[P
                 failStage(new ProxyException(s"HTTP CONNECT failed: ${status.code} ${status.message}"))
               } else {
                 setHandler(input, new InHandler {
-                  def onPush() = push(proxyOutput, grab(input))
+                  def onPush() = emit(proxyOutput, grab(input), () ⇒ if (!hasBeenPulled(input)) pull(input))
                 })
                 setHandler(output, new OutHandler {
                   def onPull() = if (!hasBeenPulled(proxyInput)) tryPull(proxyInput)
                 })
                 setHandler(proxyInput, new InHandler {
-                  def onPush() = push(output, grab(proxyInput))
+                  def onPush() = emit(output, grab(proxyInput), () ⇒ if (!hasBeenPulled(proxyInput)) tryPull(proxyInput))
                   override def onUpstreamFinish() = ()
                 })
                 setHandler(proxyOutput, new OutHandler {
