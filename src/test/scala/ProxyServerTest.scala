@@ -9,7 +9,7 @@ import com.karasiq.parsers.socks.SocksClient
 import com.karasiq.parsers.socks.SocksClient.ConnectionRequest
 import com.karasiq.parsers.socks.SocksClient.SocksVersion.{SocksV4, SocksV5}
 import com.karasiq.proxy.ProxyException
-import com.karasiq.proxy.server.{ProxyConnectionRequest, ProxyServerStage}
+import com.karasiq.proxy.server.{ProxyConnectionRequest, ProxyServer}
 import org.scalatest.{BeforeAndAfterAll, FlatSpec, Matchers}
 
 import scala.concurrent.Await
@@ -28,7 +28,7 @@ class ProxyServerTest extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   def testServer(request: ByteString, expect: ProxyConnectionRequest): Unit = {
     val future = Source.single(request)
-      .viaMat(new ProxyServerStage)(Keep.right)
+      .viaMat(ProxyServer())(Keep.right)
       .to(Sink.ignore)
       .run()
     Await.result(future, 10 seconds)._1 shouldBe expect

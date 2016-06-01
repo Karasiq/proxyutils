@@ -11,46 +11,13 @@ import akka.stream.stage._
 import akka.util.ByteString
 import com.karasiq.networkutils.http.HttpStatus
 import com.karasiq.parsers.http.{HttpConnect, HttpRequest, HttpResponse}
-import com.karasiq.parsers.socks.SocksClient.SocksVersion.{SocksV4, SocksV5}
 import com.karasiq.parsers.socks.SocksClient._
 import com.karasiq.parsers.socks.SocksServer.{AuthMethodResponse, _}
 import com.karasiq.proxy.ProxyException
 
 import scala.concurrent.{Future, Promise}
 
-object ProxyServerStage {
-  def successResponse(request: ProxyConnectionRequest): ByteString = {
-    request.scheme match {
-      case "http" ⇒
-        HttpResponse((HttpStatus(200, "Connection established"), Nil))
-
-      case "socks" ⇒
-        ConnectionStatusResponse(SocksV5, None, Codes.success(SocksV5))
-
-      case "socks4" ⇒
-        ConnectionStatusResponse(SocksV4, None, Codes.success(SocksV4))
-
-      case _ ⇒
-        throw new IllegalArgumentException(s"Invalid proxy connection request: $request")
-    }
-  }
-
-  def failureResponse(request: ProxyConnectionRequest): ByteString = {
-    request.scheme match {
-      case "http" ⇒
-        HttpResponse((HttpStatus(400, "Bad Request"), Nil))
-
-      case "socks" ⇒
-        ConnectionStatusResponse(SocksV5, None, Codes.failure(SocksV5))
-
-      case "socks4" ⇒
-        ConnectionStatusResponse(SocksV4, None, Codes.failure(SocksV4))
-
-      case _ ⇒
-        throw new IllegalArgumentException(s"Invalid proxy connection request: $request")
-    }
-  }
-
+object ProxyServer {
   def withTls(tlsContext: HttpsConnectionContext): Flow[ByteString, ByteString, Future[(ProxyConnectionRequest, Flow[ByteString, ByteString, NotUsed])]] = {
     Flow.fromGraph(GraphDSL.create(new ProxyServerStage) { implicit builder ⇒ stage ⇒
       import GraphDSL.Implicits._
@@ -62,9 +29,32 @@ object ProxyServerStage {
       FlowShape(tls.in2, tls.out1)
     })
   }
+
+  def apply(): Flow[ByteString, ByteString, Future[(ProxyConnectionRequest, Flow[ByteString, ByteString, NotUsed])]] = {
+    Flow.fromGraph(new ProxyServerStage)
+  }
+
+  def withResponse[Mat](flow: Flow[ByteString, ByteString, Mat], response: ByteString): Flow[ByteString, ByteString, Mat] = {
+    Flow.fromGraph(GraphDSL.create(flow) { implicit builder ⇒ connection ⇒
+      import GraphDSL.Implicits._
+      val inputHead = builder.add(Source.single(response))
+      val input = builder.add(Concat[ByteString]())
+      inputHead ~> input.in(0)
+      input ~> connection
+      FlowShape(input.in(1), connection.out)
+    })
+  }
+
+  def withSuccess[Mat](flow: Flow[ByteString, ByteString, Mat], request: ProxyConnectionRequest): Flow[ByteString, ByteString, Mat] = {
+    withResponse(flow, ProxyConnectionRequest.successResponse(request))
+  }
+
+  def withFailure[Mat](flow: Flow[ByteString, ByteString, Mat], request: ProxyConnectionRequest): Flow[ByteString, ByteString, Mat] = {
+    withResponse(flow, ProxyConnectionRequest.failureResponse(request))
+  }
 }
 
-class ProxyServerStage extends GraphStageWithMaterializedValue[FlowShape[ByteString, ByteString], Future[(ProxyConnectionRequest, Flow[ByteString, ByteString, NotUsed])]] {
+private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedValue[FlowShape[ByteString, ByteString], Future[(ProxyConnectionRequest, Flow[ByteString, ByteString, NotUsed])]] {
   val tcpInput = Inlet[ByteString]("ProxyServer.tcpIn")
   val tcpOutput = Outlet[ByteString]("ProxyServer.tcpOut")
   val promise = Promise[(ProxyConnectionRequest, Flow[ByteString, ByteString, NotUsed])]()

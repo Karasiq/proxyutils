@@ -20,13 +20,8 @@ import scala.language.{implicitConversions, postfixOps}
 import scala.util.Random
 
 object ProxyChain {
-  @inline
-  private def proxyFromString(s: String): Proxy = {
-    Proxy(if (s.contains("://")) s else s"http://$s")
-  }
-
   private def proxyStage(address: InetSocketAddress, proxy: Proxy, tlsContext: Option[HttpsConnectionContext] = None): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
-    def plain(scheme: String) = {
+    def stageForScheme(scheme: String) = {
       scheme.toLowerCase match {
         case "socks4" | "socks4a" ⇒
           new SocksProxyClientStage(address, SocksVersion.SocksV4, Some(proxy))
@@ -45,7 +40,7 @@ object ProxyChain {
     BidiFlow.fromGraph {
       if (proxy.scheme.startsWith("tls-") && tlsContext.nonEmpty) {
         val tls = TLS(tlsContext.get.sslContext, tlsContext.get.firstSession, TLSRole.client, hostInfo = Some(proxy.host → proxy.port))
-        BidiFlow.fromGraph(GraphDSL.create(plain(proxy.scheme.split("tls-", 2).last), tls)(Keep.left) { implicit builder ⇒ (connection, tls) ⇒
+        BidiFlow.fromGraph(GraphDSL.create(stageForScheme(proxy.scheme.split("tls-", 2).last), tls)(Keep.left) { implicit builder ⇒ (connection, tls) ⇒
           import GraphDSL.Implicits._
           val bytesIn = builder.add(Flow[SslTlsInbound].collect { case SessionBytes(_, bytes) ⇒ bytes })
           val bytesOut = builder.add(Flow[ByteString].map(SendBytes(_)))
@@ -54,7 +49,7 @@ object ProxyChain {
           BidiShape(tls.in2, tls.out1, connection.in2, connection.out2)
         })
       } else {
-        plain(proxy.scheme)
+        stageForScheme(proxy.scheme)
       }
     }
   }
@@ -74,14 +69,14 @@ object ProxyChain {
           flow
         } else {
           val (proxy, address) = proxies match {
-            case Seq(p1, p2, _*) ⇒
-              p1 → p2.toInetSocketAddress
+            case currentProxy +: nextProxy +: _ ⇒
+              currentProxy → nextProxy.toInetSocketAddress
 
-            case Seq(p) ⇒
-              p → destination
+            case currentProxy +: Nil ⇒
+              currentProxy → destination
 
             case _ ⇒
-              throw new IllegalArgumentException
+              sys.error("Invalid proxy chain")
           }
           val connectedFlow = Flow.fromGraph(GraphDSL.create(flow, proxyStage(address, proxy, tlsContext)) {
             case ((mat, ps1), ps2) ⇒
@@ -99,19 +94,19 @@ object ProxyChain {
     }
   }
 
-  def createChain(proxies: Seq[Proxy], randomize: Boolean = false, hops: Int = 0): Seq[Proxy] = {
+  def select(proxies: Seq[Proxy], randomize: Boolean = false, hops: Int = 0): Seq[Proxy] = {
     val ordered = if (randomize) Random.shuffle(proxies) else proxies
     if (hops == 0) ordered else ordered.take(hops)
   }
 
-  private def selectProxies(config: Config): Seq[Proxy] = {
+  private def configSelect(config: Config): Seq[Proxy] = {
     import scala.collection.JavaConversions._
     val proxies: IndexedSeq[String] = config.getStringList("proxies").toIndexedSeq
-    createChain(proxies.map(proxyFromString), config.getBoolean("randomize"), config.getInt("hops"))
+    select(proxies.map(s ⇒ Proxy(if (s.contains("://")) s else s"http://$s")), config.getBoolean("randomize"), config.getInt("hops"))
   }
 
   @throws[ConfigException]("if invalid config provided")
-  def chainFromConfig(config: Config): Seq[Proxy] = {
-    Seq(config.getConfig("entry"), config.getConfig("middle"), config.getConfig("exit")).flatMap(selectProxies)
+  def fromConfig(config: Config): Seq[Proxy] = {
+    Seq(config.getConfig("entry"), config.getConfig("middle"), config.getConfig("exit")).flatMap(configSelect)
   }
 }

@@ -13,7 +13,7 @@ import com.karasiq.proxy.ProxyException
 
 import scala.concurrent.{Future, Promise}
 
-class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersion = SocksVersion.SocksV5, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
+final class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersion = SocksVersion.SocksV5, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
   val input = Inlet[ByteString]("SocksProxyClient.tcpIn")
   val output = Outlet[ByteString]("SocksProxyClient.tcpOut")
   val proxyInput = Inlet[ByteString]("SocksProxyClient.dataIn")
@@ -24,18 +24,13 @@ class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersio
   def createLogicAndMaterializedValue(inheritedAttributes: Attributes) = {
     val promise = Promise[Done]
     val logic = new GraphStageLogic(shape) {
-      override def postStop() = {
-        promise.tryFailure(new ProxyException("Proxy connection closed"))
-        super.postStop()
-      }
-
       object Stage extends Enumeration {
-        val NotInitialized, AuthMethod, Auth, Request, Connected = Value
+        val NotConnecting, AuthMethod, Auth, Request = Value
       }
 
       val maxBufferSize = 4096
       var buffer = ByteString.empty
-      var stage = Stage.NotInitialized
+      var stage = Stage.NotConnecting
 
       def authInfo: (String, String) = {
         def userInfoSeq(proxy: Option[Proxy]): Option[Seq[String]] = {
@@ -62,118 +57,118 @@ class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersio
 
       def sendAuthMethodRequest(): Unit = {
         stage = Stage.AuthMethod
-        emit(output, AuthRequest(Seq(AuthMethod.NoAuth, AuthMethod.UsernamePassword)), () ⇒ if (!hasBeenPulled(input)) tryPull(input))
+        emit(output, AuthRequest(Seq(AuthMethod.NoAuth, AuthMethod.UsernamePassword)), () ⇒ pull(input))
       }
 
       def sendAuthRequest(): Unit = {
         val (userName, password) = authInfo
         stage = Stage.Auth
-        emit(output, UsernameAuthRequest(userName → password), () ⇒ if (!hasBeenPulled(input)) tryPull(input))
+        emit(output, UsernameAuthRequest(userName → password), () ⇒ pull(input))
       }
 
       def sendConnectionRequest(): Unit = {
         stage = Stage.Request
-        version match {
-          case SocksVersion.SocksV5 ⇒
-            emit(output, ConnectionRequest((SocksVersion.SocksV5, Command.TcpConnection, destination, "")), () ⇒ if (!hasBeenPulled(input)) tryPull(input))
+        emit(output, ConnectionRequest((version, Command.TcpConnection, destination, authInfo._1)), () ⇒ pull(input))
+      }
 
-          case SocksVersion.SocksV4 ⇒
-            emit(output, ConnectionRequest((SocksVersion.SocksV4, Command.TcpConnection, destination, authInfo._1)), () ⇒ if (!hasBeenPulled(input)) tryPull(input))
+      def parseResponse(data: ByteString): Unit = {
+        writeBuffer(data)
+        stage match {
+          case Stage.AuthMethod ⇒
+            buffer match {
+              case AuthMethodResponse(AuthMethod.NoAuth, rest) ⇒
+                buffer = ByteString(rest:_*)
+                sendConnectionRequest()
+
+              case AuthMethodResponse(AuthMethod.UsernamePassword, rest) ⇒
+                buffer = ByteString(rest:_*)
+                sendAuthRequest()
+
+              case AuthMethodResponse(method, _) ⇒
+                failStage(new ProxyException(s"Authentication method not supported: $method"))
+
+              case _ ⇒
+                pull(input)
+            }
+
+          case Stage.Auth ⇒
+            buffer match {
+              case AuthStatusResponse(0x00, rest) ⇒
+                buffer = ByteString(rest:_*)
+                sendConnectionRequest()
+
+              case AuthStatusResponse(_, _) ⇒
+                failStage(new ProxyException("Socks authentication rejected"))
+
+              case _ ⇒
+                pull(input)
+            }
+
+          case Stage.Request ⇒
+            buffer match {
+              case ConnectionStatusResponse((`version`, address, status), rest) ⇒
+                buffer = ByteString(rest:_*)
+                def connectionEstablished(): Unit = {
+                  setHandler(input, new InHandler {
+                    def onPush() = push(proxyOutput, grab(input))
+                  })
+                  setHandler(output, new OutHandler {
+                    def onPull() = if (!hasBeenPulled(proxyInput)) tryPull(proxyInput)
+                  })
+                  setHandler(proxyInput, new InHandler {
+                    def onPush() = push(output, grab(proxyInput))
+                    override def onUpstreamFinish() = ()
+                  })
+                  setHandler(proxyOutput, new OutHandler {
+                    def onPull() = if (!hasBeenPulled(input)) pull(input)
+                  })
+                  promise.success(Done)
+                }
+
+                if ((version == SocksVersion.SocksV5 && status != Codes.Socks5.REQUEST_GRANTED) || (version == SocksVersion.SocksV4 && status != Codes.Socks4.REQUEST_GRANTED)) {
+                  failStage(new ProxyException(s"SOCKS request rejected: $status"))
+                } else {
+                  stage = Stage.NotConnecting
+                  connectionEstablished()
+                  if (buffer.nonEmpty) {
+                    emit(proxyOutput, buffer, () ⇒ if (!hasBeenPulled(input)) pull(input))
+                    buffer = ByteString.empty
+                  } else {
+                    pull(input)
+                  }
+                  pull(proxyInput)
+                }
+
+              case _ ⇒
+            }
+
+          case _ ⇒
+            failStage(new IllegalArgumentException("Invalid stage"))
         }
       }
 
-      def onReceive(data: ByteString): Unit = {
-        if (stage == Stage.Connected) {
-          emit(proxyOutput, data, () ⇒ if (!hasBeenPulled(input)) tryPull(input))
-        } else {
-          writeBuffer(data)
-          stage match {
-            case Stage.AuthMethod ⇒
-              buffer match {
-                case AuthMethodResponse(AuthMethod.NoAuth, rest) ⇒
-                  buffer = ByteString(rest:_*)
-                  sendConnectionRequest()
+      override def preStart() = {
+        super.preStart()
+        version match {
+          case SocksVersion.SocksV5 ⇒
+            sendAuthMethodRequest()
 
-                case AuthMethodResponse(AuthMethod.UsernamePassword, rest) ⇒
-                  buffer = ByteString(rest:_*)
-                  sendAuthRequest()
-
-                case AuthMethodResponse(method, _) ⇒
-                  failStage(new ProxyException(s"Authentication method not supported: $method"))
-
-                case _ ⇒
-                  if (!hasBeenPulled(input)) tryPull(input)
-              }
-
-            case Stage.Auth ⇒
-              buffer match {
-                case AuthStatusResponse(0x00, rest) ⇒
-                  buffer = ByteString(rest:_*)
-                  sendConnectionRequest()
-
-                case AuthStatusResponse(_, _) ⇒
-                  failStage(new ProxyException("Socks authentication rejected"))
-
-                case _ ⇒
-                  if (!hasBeenPulled(input)) tryPull(input)
-              }
-
-            case Stage.Request ⇒
-              buffer match {
-                case ConnectionStatusResponse((`version`, address, status), rest) ⇒
-                  if ((version == SocksVersion.SocksV5 && status != Codes.Socks5.REQUEST_GRANTED) || (version == SocksVersion.SocksV4 && status != Codes.Socks4.REQUEST_GRANTED)) {
-                    failStage(new ProxyException(s"SOCKS request rejected: $status"))
-                  }
-
-                  promise.success(Done)
-                  stage = Stage.Connected
-                  buffer = ByteString.empty
-                  if (rest.nonEmpty) emit(proxyOutput, ByteString(rest:_*))
-                  if (!hasBeenPulled(input)) tryPull(input)
-                  if (!hasBeenPulled(proxyInput)) tryPull(proxyInput)
-              }
-
-            case _ ⇒
-              failStage(new IllegalArgumentException)
-          }
+          case SocksVersion.SocksV4 ⇒
+            sendConnectionRequest()
         }
+      }
+
+      override def postStop() = {
+        promise.tryFailure(new ProxyException("Proxy connection closed"))
+        super.postStop()
       }
 
       setHandler(input, new InHandler {
-        def onPush() = {
-          val data = grab(input)
-          onReceive(data)
-        }
+        def onPush() = parseResponse(grab(input))
       })
-
-      setHandler(proxyInput, new InHandler {
-        def onPush() = {
-          if (stage == Stage.Connected) {
-            val data = grab(proxyInput)
-            emit(output, data, () ⇒ if (!hasBeenPulled(proxyInput)) tryPull(proxyInput))
-          } else {
-            failStage(new ProxyException("Socks proxy is not ready"))
-          }
-        }
-
-        override def onUpstreamFinish() = ()
-      })
-
-      val outHandler = new OutHandler {
-        def onPull() = {
-          if (stage == Stage.NotInitialized) {
-            version match {
-              case SocksVersion.SocksV5 ⇒
-                sendAuthMethodRequest()
-
-              case SocksVersion.SocksV4 ⇒
-                sendConnectionRequest()
-            }
-          }
-        }
-      }
-      setHandler(output, outHandler)
-      setHandler(proxyOutput, outHandler)
+      setHandler(proxyInput, eagerTerminateInput)
+      setHandler(output, eagerTerminateOutput)
+      setHandler(proxyOutput, eagerTerminateOutput)
     }
     (logic, promise.future)
   }
