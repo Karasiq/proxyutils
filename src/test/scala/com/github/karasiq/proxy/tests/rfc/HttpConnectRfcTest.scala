@@ -27,26 +27,13 @@ class HttpConnectRfcTest extends FlatSpec with Matchers {
 
   it should "create request" in {
     val address = InetSocketAddress.createUnresolved("host.com", 443)
-    HttpConnect(address, Seq(Host(address), HttpHeader("Test-Header", "test"))) match {
-      case bs: ByteString ⇒
-        bs.utf8String shouldBe """CONNECT host.com:443 HTTP/1.1
-                                 |Host: host.com:443
-                                 |Test-Header: test
-                                 |
-                                 |""".stripMargin
-    }
+    val data = HttpConnect(address, Seq(Host(address), HttpHeader("Test-Header", "test")))
+    data.utf8String shouldBe "CONNECT host.com:443 HTTP/1.1\r\nHost: host.com:443\r\nTest-Header: test\r\n\r\n"
   }
 
   it should "create response" in {
-    HttpResponse((HttpStatus(123, "Test code"), Seq(HttpHeader("Host: host.com"), HttpHeader("Test-Header: test")))) match {
-      case bs: ByteString ⇒
-        bs.utf8String shouldBe
-          """HTTP/1.1 123 Test code
-            |Host: host.com
-            |Test-Header: test
-            |
-            |""".stripMargin
-    }
+    val data = HttpResponse((HttpStatus(123, "Test code"), Seq(HttpHeader("Host: host.com"), HttpHeader("Test-Header: test"))))
+    data.utf8String shouldBe "HTTP/1.1 123 Test code\r\nHost: host.com\r\nTest-Header: test\r\n\r\n"
   }
 
   it should "parse Proxy-Authorization header" in {

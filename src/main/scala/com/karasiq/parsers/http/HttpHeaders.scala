@@ -15,7 +15,7 @@ private[http] object HttpHeaders {
   def unapply(b: Seq[Byte]): Option[(Seq[HttpHeader], Seq[Byte])] = {
     asByteString(b).utf8String.split(headersEnd, 2).toSeq match {
       case h +: rest ⇒
-        val headers = h.lines.collect(asHeader).toVector
+        val headers = h.split("\r\n").collect(asHeader).toVector
         Some(headers → ByteString(rest.mkString))
 
       case _ ⇒

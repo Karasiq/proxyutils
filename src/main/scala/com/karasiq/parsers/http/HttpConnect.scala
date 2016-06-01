@@ -17,7 +17,7 @@ object HttpConnect {
   }
 
   private def withHostHeader(address: InetSocketAddress, headers: Seq[HttpHeader]) = {
-    if (headers.exists(_.name == Host.name)) headers else headers ++ Seq(Host(address))
+    if (headers.exists(_.name == Host.name)) headers else headers :+ Host(address)
   }
 
   def apply(address: InetSocketAddress, headers: Seq[HttpHeader]): ByteString = {
