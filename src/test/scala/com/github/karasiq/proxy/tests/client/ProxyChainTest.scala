@@ -1,3 +1,5 @@
+package com.github.karasiq.proxy.tests.client
+
 import java.net.{InetSocketAddress, URI}
 import java.security.SecureRandom
 import javax.net.ssl.{KeyManagerFactory, SSLContext, TrustManagerFactory}
@@ -8,22 +10,22 @@ import akka.http.scaladsl.{ConnectionContext, HttpsConnectionContext}
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Flow, Keep, Source, Tcp}
 import akka.stream.testkit.scaladsl.TestSink
-import akka.util.{ByteString, Timeout}
+import akka.util.ByteString
 import com.karasiq.networkutils.http.headers.HttpHeader
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.http.{HttpMethod, HttpRequest}
 import com.karasiq.proxy._
 import com.karasiq.tls.TLSKeyStore
 import com.typesafe.config.ConfigFactory
+import org.scalatest.tags.Network
 import org.scalatest.{BeforeAndAfterAll, FlatSpec, Matchers}
 
 import scala.concurrent.Future
-import scala.concurrent.duration._
 import scala.language.postfixOps
 
 // You need to have running proxies to run this test
+@Network
 class ProxyChainTest extends FlatSpec with Matchers with BeforeAndAfterAll {
-  implicit val timeout = Timeout(1 minute)
   implicit val actorSystem = ActorSystem("proxy-chain-test")
   implicit val materializer = ActorMaterializer.create(actorSystem)
   import actorSystem.dispatcher

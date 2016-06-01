@@ -1,9 +1,11 @@
+package com.github.karasiq.proxy.tests.server
+
 import java.net.InetSocketAddress
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Keep, Sink, Source}
-import akka.util.{ByteString, Timeout}
+import akka.util.ByteString
 import com.karasiq.parsers.http.{HttpMethod, HttpRequest}
 import com.karasiq.parsers.socks.SocksClient
 import com.karasiq.parsers.socks.SocksClient.ConnectionRequest
@@ -17,7 +19,6 @@ import scala.concurrent.duration._
 import scala.language.postfixOps
 
 class ProxyServerTest extends FlatSpec with Matchers with BeforeAndAfterAll {
-  implicit val timeout = Timeout(1 minute)
   implicit val actorSystem = ActorSystem("proxy-server-test")
   implicit val materializer = ActorMaterializer.create(actorSystem)
 

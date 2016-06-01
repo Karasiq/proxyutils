@@ -1,3 +1,5 @@
+package com.github.karasiq.proxy.tests.rfc
+
 import java.net.InetSocketAddress
 
 import akka.util.ByteString

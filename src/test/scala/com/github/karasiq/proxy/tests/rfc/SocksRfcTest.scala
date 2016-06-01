@@ -1,3 +1,5 @@
+package com.github.karasiq.proxy.tests.rfc
+
 import akka.util.ByteString
 import com.karasiq.parsers.socks.SocksClient._
 import com.karasiq.parsers.socks.SocksServer._
