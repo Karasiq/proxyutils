@@ -3,6 +3,7 @@ package com.karasiq.proxy.client
 import java.net.InetSocketAddress
 
 import akka.Done
+import akka.event.LoggingAdapter
 import akka.stream._
 import akka.stream.stage._
 import akka.util.ByteString
@@ -13,7 +14,7 @@ import com.karasiq.proxy.ProxyException
 
 import scala.concurrent.{Future, Promise}
 
-final class SocksProxyClientStage(destination: InetSocketAddress, version: SocksVersion = SocksVersion.SocksV5, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
+final class SocksProxyClientStage(log: LoggingAdapter, destination: InetSocketAddress, version: SocksVersion = SocksVersion.SocksV5, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
   val input = Inlet[ByteString]("SocksProxyClient.tcpIn")
   val output = Outlet[ByteString]("SocksProxyClient.tcpOut")
   val proxyInput = Inlet[ByteString]("SocksProxyClient.dataIn")
@@ -31,6 +32,7 @@ final class SocksProxyClientStage(destination: InetSocketAddress, version: Socks
       val maxBufferSize = 4096
       var buffer = ByteString.empty
       var stage = Stage.NotConnecting
+      val proxyString = proxy.getOrElse("<unknown>")
 
       def authInfo: (String, String) = {
         def userInfoSeq(proxy: Option[Proxy]): Option[Seq[String]] = {
@@ -57,16 +59,19 @@ final class SocksProxyClientStage(destination: InetSocketAddress, version: Socks
 
       def sendAuthMethodRequest(): Unit = {
         stage = Stage.AuthMethod
+        log.debug("Requesting available auth methods from SOCKS proxy: {}", proxyString)
         emit(output, AuthRequest(Seq(AuthMethod.NoAuth, AuthMethod.UsernamePassword)), () ⇒ pull(input))
       }
 
       def sendAuthRequest(): Unit = {
+        log.debug(s"Sending auth request to SOCKS proxy: {}", proxyString)
         val (userName, password) = authInfo
         stage = Stage.Auth
         emit(output, UsernameAuthRequest(userName → password), () ⇒ pull(input))
       }
 
       def sendConnectionRequest(): Unit = {
+        log.debug("Sending connection request to SOCKS proxy {} -> {}", proxyString, destination)
         stage = Stage.Request
         emit(output, ConnectionRequest((version, Command.TcpConnection, destination, authInfo._1)), () ⇒ pull(input))
       }
@@ -78,10 +83,12 @@ final class SocksProxyClientStage(destination: InetSocketAddress, version: Socks
             buffer match {
               case AuthMethodResponse(AuthMethod.NoAuth, rest) ⇒
                 buffer = ByteString(rest:_*)
+                log.debug("SOCKS proxy has no authentication: {}", proxyString)
                 sendConnectionRequest()
 
               case AuthMethodResponse(AuthMethod.UsernamePassword, rest) ⇒
                 buffer = ByteString(rest:_*)
+                log.debug("SOCKS proxy requested username/password authentication: {}", proxyString)
                 sendAuthRequest()
 
               case AuthMethodResponse(method, _) ⇒
@@ -95,10 +102,11 @@ final class SocksProxyClientStage(destination: InetSocketAddress, version: Socks
             buffer match {
               case AuthStatusResponse(0x00, rest) ⇒
                 buffer = ByteString(rest:_*)
+                log.debug("SOCKS proxy accepted authentication: {}", proxyString)
                 sendConnectionRequest()
 
               case AuthStatusResponse(_, _) ⇒
-                failStage(new ProxyException("Socks authentication rejected"))
+                failStage(new ProxyException("SOCKS authentication rejected"))
 
               case _ ⇒
                 pull(input)
@@ -108,35 +116,20 @@ final class SocksProxyClientStage(destination: InetSocketAddress, version: Socks
             buffer match {
               case ConnectionStatusResponse((`version`, address, status), rest) ⇒
                 buffer = ByteString(rest:_*)
-                def connectionEstablished(): Unit = {
-                  setHandler(input, new InHandler {
-                    def onPush() = emit(proxyOutput, grab(input), () ⇒ if (!hasBeenPulled(input)) tryPull(input))
-                  })
-                  setHandler(output, new OutHandler {
-                    def onPull() = if (!hasBeenPulled(proxyInput)) tryPull(proxyInput)
-                  })
-                  setHandler(proxyInput, new InHandler {
-                    def onPush() = emit(output, grab(proxyInput), () ⇒ if (!hasBeenPulled(proxyInput)) tryPull(proxyInput))
-                    override def onUpstreamFinish() = ()
-                  })
-                  setHandler(proxyOutput, new OutHandler {
-                    def onPull() = if (!hasBeenPulled(input)) pull(input)
-                  })
-                  promise.success(Done)
-                }
-
                 if ((version == SocksVersion.SocksV5 && status != Codes.Socks5.REQUEST_GRANTED) || (version == SocksVersion.SocksV4 && status != Codes.Socks4.REQUEST_GRANTED)) {
                   failStage(new ProxyException(s"SOCKS request rejected: $status"))
                 } else {
+                  log.debug("Connection established to {} through SOCKS proxy: {}", destination, proxyString)
                   stage = Stage.NotConnecting
-                  connectionEstablished()
+                  passAlong(input, proxyOutput)
+                  passAlong(proxyInput, output, doFinish = false, doPull = true)
+                  promise.success(Done)
                   if (buffer.nonEmpty) {
                     emit(proxyOutput, buffer, () ⇒ if (!hasBeenPulled(input)) pull(input))
                     buffer = ByteString.empty
                   } else {
                     pull(input)
                   }
-                  pull(proxyInput)
                 }
 
               case _ ⇒

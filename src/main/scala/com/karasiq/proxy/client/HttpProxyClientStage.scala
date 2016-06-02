@@ -4,6 +4,7 @@ import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 
 import akka.Done
+import akka.event.LoggingAdapter
 import akka.stream._
 import akka.stream.stage._
 import akka.util.ByteString
@@ -14,7 +15,7 @@ import com.karasiq.proxy.ProxyException
 
 import scala.concurrent.{Future, Promise}
 
-final class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
+final class HttpProxyClientStage(log: LoggingAdapter, destination: InetSocketAddress, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
   val input = Inlet[ByteString]("HttpProxyClient.tcpIn")
   val output = Outlet[ByteString]("HttpProxyClient.tcpOut")
   val proxyInput = Inlet[ByteString]("HttpProxyClient.dataIn")
@@ -28,10 +29,13 @@ final class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[P
       val bufferSize = 8192
       val terminator = ByteString("\r\n\r\n", StandardCharsets.US_ASCII.name())
       var buffer = ByteString.empty
+      val proxyString = proxy.getOrElse("<unknown>")
 
       def sendRequest(): Unit = {
         val auth: Seq[HttpHeader] = proxy.flatMap(_.userInfo).map(userInfo ⇒ `Proxy-Authorization`.basic(userInfo)).toVector
-        emit(output, HttpConnect(destination, auth), () ⇒ pull(input))
+        val request = HttpConnect(destination, auth)
+        log.debug(s"Sending request to HTTP proxy {}: {}", proxyString, request.utf8String)
+        emit(output, request, () ⇒ pull(input))
       }
 
       def parseResponse(): Unit = {
@@ -40,23 +44,14 @@ final class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[P
           val (keep, drop) = buffer.splitAt(headersEnd + terminator.length)
           buffer = drop
           keep match {
-            case HttpResponse((status, headers), _) ⇒
+            case response @ HttpResponse((status, headers), _) ⇒
+              log.debug("Received response from HTTP proxy {}: {}", proxyString, response.utf8String)
               if (status.code != 200) {
-                failStage(new ProxyException(s"HTTP CONNECT failed: ${status.code} ${status.message}"))
+                failStage(new ProxyException(s"HTTP CONNECT rejected by $proxyString: ${status.code} ${status.message}"))
               } else {
-                setHandler(input, new InHandler {
-                  def onPush() = emit(proxyOutput, grab(input), () ⇒ if (!hasBeenPulled(input)) pull(input))
-                })
-                setHandler(output, new OutHandler {
-                  def onPull() = if (!hasBeenPulled(proxyInput)) tryPull(proxyInput)
-                })
-                setHandler(proxyInput, new InHandler {
-                  def onPush() = emit(output, grab(proxyInput), () ⇒ if (!hasBeenPulled(proxyInput)) tryPull(proxyInput))
-                  override def onUpstreamFinish() = ()
-                })
-                setHandler(proxyOutput, new OutHandler {
-                  def onPull() = if (!hasBeenPulled(input)) pull(input)
-                })
+                log.debug("Connection established to {} through HTTP proxy: {}", destination, proxyString)
+                passAlong(input, proxyOutput)
+                passAlong(proxyInput, output, doFinish = false, doPull = true)
                 promise.success(Done)
                 if (buffer.nonEmpty) {
                   emit(proxyOutput, buffer, () ⇒ if (!hasBeenPulled(input)) pull(input))
@@ -64,13 +59,13 @@ final class HttpProxyClientStage(destination: InetSocketAddress, proxy: Option[P
                 } else {
                   pull(input)
                 }
-                pull(proxyInput)
               }
 
             case bs: ByteString ⇒
               failStage(new ProxyException(s"Bad HTTPS proxy response: ${bs.utf8String}"))
           }
         } else {
+          log.debug("Incomplete response from HTTP proxy {}: {}", proxyString, buffer.utf8String)
           pull(input)
         }
       }

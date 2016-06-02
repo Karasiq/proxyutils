@@ -93,6 +93,9 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
             if (outlet.isAvailable) {
               outlet.push(buffer ++ data)
               buffer = ByteString.empty
+              if (!hasBeenPulled(tcpInput)) {
+                tryPull(tcpInput)
+              }
             } else {
               buffer ++= data
             }
@@ -112,7 +115,7 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
 
         setHandler(tcpOutput, new OutHandler {
           def onPull() = {
-            if (!inlet.hasBeenPulled) {
+            if (!inlet.hasBeenPulled && !inlet.isClosed) {
               inlet.pull()
             }
           }
@@ -124,29 +127,36 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
 
         outlet.setHandler(new OutHandler {
           def onPull() = {
-            if (isClosed(tcpInput)) {
-              if (buffer.nonEmpty) {
-                outlet.push(buffer)
-                buffer = ByteString.empty
-              }
-              outlet.complete()
-            } else if (buffer.nonEmpty) {
+            if (buffer.nonEmpty) {
               outlet.push(buffer)
               buffer = ByteString.empty
-            } else {
-              pull(tcpInput)
             }
+
+            if (isClosed(tcpInput)) {
+              outlet.complete()
+            } else if (!hasBeenPulled(tcpInput)) {
+              tryPull(tcpInput)
+            }
+          }
+
+          override def onDownstreamFinish() = {
+            cancel(tcpInput)
           }
         })
 
         inlet.setHandler(new InHandler {
           def onPush() = {
-            emit(tcpOutput, inlet.grab())
+            emit(tcpOutput, inlet.grab(), () ⇒ if (!inlet.hasBeenPulled && !inlet.isClosed) inlet.pull())
+          }
+
+          override def onUpstreamFinish() = {
+            complete(tcpOutput)
           }
         })
 
         promise.success(request → Flow.fromSinkAndSource(inlet.sink, outlet.source))
         inlet.pull()
+        pull(tcpInput)
       }
 
       def processBuffer(): Unit = {

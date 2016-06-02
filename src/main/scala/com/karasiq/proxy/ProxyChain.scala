@@ -4,6 +4,7 @@ import java.net.InetSocketAddress
 
 import akka.Done
 import akka.actor.ActorSystem
+import akka.event.Logging
 import akka.http.scaladsl.HttpsConnectionContext
 import akka.stream.TLSProtocol.{SendBytes, SessionBytes, SslTlsInbound}
 import akka.stream.scaladsl.{BidiFlow, Flow, GraphDSL, Keep, TLS, Tcp}
@@ -20,17 +21,18 @@ import scala.language.{implicitConversions, postfixOps}
 import scala.util.Random
 
 object ProxyChain {
-  private def proxyStage(address: InetSocketAddress, proxy: Proxy, tlsContext: Option[HttpsConnectionContext] = None): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
+  private def proxyStage(address: InetSocketAddress, proxy: Proxy, tlsContext: Option[HttpsConnectionContext] = None)(implicit as: ActorSystem): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
+    val log = Logging(as, "ProxyStage")
     def stageForScheme(scheme: String) = {
       scheme.toLowerCase match {
         case "socks4" | "socks4a" ⇒
-          new SocksProxyClientStage(address, SocksVersion.SocksV4, Some(proxy))
+          new SocksProxyClientStage(log, address, SocksVersion.SocksV4, Some(proxy))
 
         case "socks5" | "socks" ⇒
-          new SocksProxyClientStage(address, SocksVersion.SocksV5, Some(proxy))
+          new SocksProxyClientStage(log, address, SocksVersion.SocksV5, Some(proxy))
 
         case "http" | "https" ⇒
-          new HttpProxyClientStage(address, Some(proxy))
+          new HttpProxyClientStage(log, address, Some(proxy))
 
         case _ ⇒
           throw new IllegalArgumentException(s"Unknown proxy protocol: $scheme")
@@ -59,7 +61,7 @@ object ProxyChain {
     createFlow(Tcp().outgoingConnection(address), destination, proxies, tlsContext)
   }
 
-  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Seq[Proxy], tlsContext: Option[HttpsConnectionContext] = None)(implicit ec: ExecutionContext): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
+  def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Seq[Proxy], tlsContext: Option[HttpsConnectionContext] = None)(implicit as: ActorSystem, ec: ExecutionContext): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
     val flowWithDone = flow.mapMaterializedValue(_ → Future.successful(Done))
     if (proxies.isEmpty) flowWithDone
     else {
