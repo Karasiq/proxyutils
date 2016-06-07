@@ -34,19 +34,12 @@ final class SocksProxyClientStage(log: LoggingAdapter, destination: InetSocketAd
       var stage = Stage.NotConnecting
       val proxyString = proxy.getOrElse("<unknown>")
 
-      def authInfo: (String, String) = {
-        def userInfoSeq(proxy: Option[Proxy]): Option[Seq[String]] = {
-          proxy.flatMap(_.userInfo)
-            .map(_.split(":", 2).toVector)
-        }
-
-        userInfoSeq(proxy) match {
-          case Some(userName +: password +: Nil) ⇒
-            userName → password
-
-          case _ ⇒
-            "" → ""
-        }
+      def authCredentials: (String, String) = {
+        val loginPassword = for (p ← proxy; string ← p.userInfo; Array(login, password) ← Some(string.split(":", 2)))
+          yield (login, password)
+        loginPassword
+          .orElse(proxy.flatMap(_.userInfo).map(_ → ""))
+          .getOrElse("" → "")
       }
 
       def writeBuffer(data: ByteString): Unit = {
@@ -65,15 +58,16 @@ final class SocksProxyClientStage(log: LoggingAdapter, destination: InetSocketAd
 
       def sendAuthRequest(): Unit = {
         log.debug(s"Sending auth request to SOCKS proxy: {}", proxyString)
-        val (userName, password) = authInfo
+        val (login, password) = authCredentials
         stage = Stage.Auth
-        emit(output, UsernameAuthRequest(userName → password), () ⇒ pull(input))
+        emit(output, UsernameAuthRequest(login → password), () ⇒ pull(input))
       }
 
       def sendConnectionRequest(): Unit = {
         log.debug("Sending connection request to SOCKS proxy {} -> {}", proxyString, destination)
         stage = Stage.Request
-        emit(output, ConnectionRequest((version, Command.TcpConnection, destination, authInfo._1)), () ⇒ pull(input))
+        val (userId, _) = authCredentials
+        emit(output, ConnectionRequest((version, Command.TcpConnection, destination, userId)), () ⇒ pull(input))
       }
 
       def parseResponse(data: ByteString): Unit = {
