@@ -76,9 +76,14 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
         pull(tcpInput)
       }
 
+      def failConnection(ex: Exception): Unit = {
+        promise.tryFailure(ex)
+        failStage(ex)
+      }
+
       def writeBuffer(data: ByteString): Unit = {
         if (buffer.length > bufferSize) {
-          failStage(BufferOverflowException("Buffer overflow"))
+          failConnection(BufferOverflowException("Buffer overflow"))
         } else {
           buffer ++= data
         }
@@ -87,30 +92,44 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
       def emitRequest(request: ProxyConnectionRequest): Unit = {
         val inlet = new SubSinkInlet[ByteString]("ProxyServer.tcpInConnected")
         val outlet = new SubSourceOutlet[ByteString]("ProxyServer.tcpOutConnected")
+        var outletEmitting = false
+        val outletHandler = new OutHandler {
+          @scala.throws[Exception](classOf[Exception])
+          def onPull() = ()
+
+          override def onDownstreamFinish() = {
+            cancel(tcpInput)
+          }
+        }
+
         setHandler(tcpInput, new InHandler {
           def onPush() = {
             val data = grab(tcpInput)
             if (outlet.isAvailable) {
-              outlet.push(buffer ++ data)
-              buffer = ByteString.empty
-              if (!hasBeenPulled(tcpInput)) {
-                tryPull(tcpInput)
-              }
+              outlet.push(data)
+              pull(tcpInput)
             } else {
-              buffer ++= data
+              outletEmitting = true
+              outlet.setHandler(new OutHandler {
+                def onPull() = {
+                  outletEmitting = false
+                  outlet.push(data)
+                  outlet.setHandler(outletHandler)
+                  if (isClosed(tcpInput)) {
+                    outlet.complete()
+                  } else {
+                    pull(tcpInput)
+                  }
+                }
+
+                override def onDownstreamFinish() = {
+                  outletHandler.onDownstreamFinish()
+                }
+              })
             }
           }
 
-          override def onUpstreamFinish() = {
-            if (buffer.isEmpty) {
-              outlet.complete()
-            }
-          }
-
-          override def onUpstreamFailure(ex: Throwable) = {
-            outlet.fail(ex)
-            super.onUpstreamFailure(ex)
-          }
+          override def onUpstreamFinish() = if (!outletEmitting) outlet.complete()
         })
 
         setHandler(tcpOutput, new OutHandler {
@@ -125,25 +144,6 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
           }
         })
 
-        outlet.setHandler(new OutHandler {
-          def onPull() = {
-            if (buffer.nonEmpty) {
-              outlet.push(buffer)
-              buffer = ByteString.empty
-            }
-
-            if (isClosed(tcpInput)) {
-              outlet.complete()
-            } else if (!hasBeenPulled(tcpInput)) {
-              tryPull(tcpInput)
-            }
-          }
-
-          override def onDownstreamFinish() = {
-            cancel(tcpInput)
-          }
-        })
-
         inlet.setHandler(new InHandler {
           def onPush() = {
             emit(tcpOutput, inlet.grab(), () ⇒ if (!inlet.hasBeenPulled && !inlet.isClosed) inlet.pull())
@@ -154,9 +154,22 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
           }
         })
 
+        if (buffer.nonEmpty) {
+          outlet.setHandler(new OutHandler {
+            def onPull() = {
+              outlet.push(buffer)
+              buffer = ByteString.empty
+              outlet.setHandler(outletHandler)
+              pull(tcpInput)
+            }
+          })
+        } else {
+          outlet.setHandler(outletHandler)
+          pull(tcpInput)
+        }
+
         promise.success(request → Flow.fromSinkAndSource(inlet.sink, outlet.source))
         inlet.pull()
-        pull(tcpInput)
       }
 
       def processBuffer(): Unit = {
@@ -167,8 +180,7 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
               val code = if (socksVersion == SocksVersion.SocksV5) Codes.Socks5.COMMAND_NOT_SUPPORTED else Codes.failure(socksVersion)
               emit(tcpOutput, ConnectionStatusResponse(socksVersion, None, code), () ⇒ {
                 val ex = new ProxyException("Command not supported")
-                promise.failure(ex)
-                failStage(ex)
+                failConnection(ex)
               })
             } else {
               emitRequest(ProxyConnectionRequest(if (socksVersion == SocksVersion.SocksV5) "socks" else "socks4", address))
@@ -181,8 +193,7 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
             } else {
               emit(tcpOutput, AuthMethodResponse.notSupported, () ⇒ {
                 val ex = new ProxyException("No valid authentication methods provided")
-                promise.failure(ex)
-                failStage(ex)
+                failConnection(ex)
               })
             }
 
@@ -192,8 +203,7 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
             if (address.getHostString.isEmpty) { // Plain HTTP request
               emit(tcpOutput, HttpResponse(HttpStatus(400, "Bad Request"), Nil) ++ ByteString("Request not supported"), () ⇒ {
                 val ex = new ProxyException("Plain HTTP not supported")
-                promise.failure(ex)
-                failStage(ex)
+                failConnection(ex)
               })
             } else {
               emitRequest(ProxyConnectionRequest("http", address))
