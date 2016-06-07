@@ -6,6 +6,7 @@ import akka.Done
 import akka.actor.ActorSystem
 import akka.event.Logging
 import akka.http.scaladsl.HttpsConnectionContext
+import akka.io.Tcp.SO
 import akka.stream.TLSProtocol.{SendBytes, SessionBytes, SslTlsInbound}
 import akka.stream.scaladsl.{BidiFlow, Flow, GraphDSL, Keep, TLS, Tcp}
 import akka.stream.{BidiShape, FlowShape, TLSRole}
@@ -16,6 +17,7 @@ import com.karasiq.proxy.client.{HttpProxyClientStage, SocksProxyClientStage}
 import com.typesafe.config.{Config, ConfigException}
 
 import scala.annotation.tailrec
+import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.language.{implicitConversions, postfixOps}
 import scala.util.Random
@@ -58,7 +60,7 @@ object ProxyChain {
 
   def connect(destination: InetSocketAddress, proxies: Seq[Proxy], tlsContext: Option[HttpsConnectionContext] = None)(implicit as: ActorSystem, ec: ExecutionContext): Flow[ByteString, ByteString, (Future[Tcp.OutgoingConnection], Future[Done])] = {
     val address = proxies.headOption.fold(destination)(_.toInetSocketAddress)
-    createFlow(Tcp().outgoingConnection(address), destination, proxies, tlsContext)
+    createFlow(Tcp().outgoingConnection(address, options = List(SO.KeepAlive(true), SO.TcpNoDelay(true)), connectTimeout = 15 seconds, idleTimeout = 5 minutes), destination, proxies, tlsContext)
   }
 
   def createFlow[Mat](flow: Flow[ByteString, ByteString, Mat], destination: InetSocketAddress, proxies: Seq[Proxy], tlsContext: Option[HttpsConnectionContext] = None)(implicit as: ActorSystem, ec: ExecutionContext): Flow[ByteString, ByteString, (Mat, Future[Done])] = {
