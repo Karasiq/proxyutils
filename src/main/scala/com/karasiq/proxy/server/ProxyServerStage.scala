@@ -10,7 +10,8 @@ import akka.stream.scaladsl._
 import akka.stream.stage._
 import akka.util.ByteString
 import com.karasiq.networkutils.http.HttpStatus
-import com.karasiq.parsers.http.{HttpConnect, HttpRequest, HttpResponse}
+import com.karasiq.networkutils.url.URLParser
+import com.karasiq.parsers.http.{HttpConnect, HttpMethod, HttpRequest, HttpResponse}
 import com.karasiq.parsers.socks.SocksClient._
 import com.karasiq.parsers.socks.SocksServer.{AuthMethodResponse, _}
 import com.karasiq.proxy.ProxyException
@@ -46,7 +47,7 @@ object ProxyServer {
   }
 
   def withSuccess[Mat](flow: Flow[ByteString, ByteString, Mat], request: ProxyConnectionRequest): Flow[ByteString, ByteString, Mat] = {
-    withResponse(flow, ProxyConnectionRequest.successResponse(request))
+    if (request.scheme == "http") flow else withResponse(flow, ProxyConnectionRequest.successResponse(request))
   }
 
   def withFailure[Mat](flow: Flow[ByteString, ByteString, Mat], request: ProxyConnectionRequest): Flow[ByteString, ByteString, Mat] = {
@@ -101,71 +102,48 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
             cancel(tcpInput)
           }
         }
+        def outletEmit(data: ByteString, andThen: () ⇒ Unit): Unit = {
+          if (outlet.isAvailable) {
+            outlet.push(data)
+            andThen()
+          } else {
+            outletEmitting = true
+            outlet.setHandler(new OutHandler {
+              def onPull() = {
+                outletEmitting = false
+                outlet.push(data)
+                outlet.setHandler(outletHandler)
+                andThen()
+              }
+
+              override def onDownstreamFinish() = {
+                outletHandler.onDownstreamFinish()
+              }
+            })
+          }
+        }
 
         setHandler(tcpInput, new InHandler {
-          def onPush() = {
-            val data = grab(tcpInput)
-            if (outlet.isAvailable) {
-              outlet.push(data)
-              pull(tcpInput)
-            } else {
-              outletEmitting = true
-              outlet.setHandler(new OutHandler {
-                def onPull() = {
-                  outletEmitting = false
-                  outlet.push(data)
-                  outlet.setHandler(outletHandler)
-                  if (isClosed(tcpInput)) {
-                    outlet.complete()
-                  } else {
-                    pull(tcpInput)
-                  }
-                }
-
-                override def onDownstreamFinish() = {
-                  outletHandler.onDownstreamFinish()
-                }
-              })
-            }
-          }
-
+          def onPush() = outletEmit(grab(tcpInput), () ⇒ if (isClosed(tcpInput)) outlet.complete() else pull(tcpInput))
           override def onUpstreamFinish() = if (!outletEmitting) outlet.complete()
         })
 
         setHandler(tcpOutput, new OutHandler {
-          def onPull() = {
-            if (!inlet.hasBeenPulled && !inlet.isClosed) {
-              inlet.pull()
-            }
-          }
-
-          override def onDownstreamFinish() = {
-            inlet.cancel()
-          }
+          def onPull() = if (!inlet.hasBeenPulled && !inlet.isClosed) inlet.pull()
+          override def onDownstreamFinish() = inlet.cancel()
         })
 
         inlet.setHandler(new InHandler {
-          def onPush() = {
-            emit(tcpOutput, inlet.grab(), () ⇒ if (!inlet.hasBeenPulled && !inlet.isClosed) inlet.pull())
-          }
-
-          override def onUpstreamFinish() = {
-            complete(tcpOutput)
-          }
+          def onPush() = emit(tcpOutput, inlet.grab(), () ⇒ if (!inlet.hasBeenPulled && !inlet.isClosed) inlet.pull())
+          override def onUpstreamFinish() = complete(tcpOutput)
         })
+        outlet.setHandler(outletHandler)
 
         if (buffer.nonEmpty) {
-          outlet.setHandler(new OutHandler {
-            def onPull() = {
-              outlet.push(buffer)
-              buffer = ByteString.empty
-              outlet.setHandler(outletHandler)
-              pull(tcpInput)
-            }
-          })
+          outletEmit(buffer, () ⇒ if (isClosed(tcpInput)) outlet.complete() else pull(tcpInput))
+          buffer = ByteString.empty
         } else {
-          outlet.setHandler(outletHandler)
-          pull(tcpInput)
+          tryPull(tcpInput)
         }
 
         promise.success(request → Flow.fromSinkAndSource(inlet.sink, outlet.source))
@@ -206,7 +184,15 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
                 failConnection(ex)
               })
             } else {
-              emitRequest(ProxyConnectionRequest("http", address))
+              if (method != HttpMethod.CONNECT) {
+                // Replicate request
+                val path = Option(URLParser.withDefaultProtocol(url).getPath).filter(_.nonEmpty).getOrElse("/")
+                val request = HttpRequest((method, path, headers))
+                buffer = request ++ buffer
+                emitRequest(ProxyConnectionRequest("http", address))
+              } else {
+                emitRequest(ProxyConnectionRequest("https", address))
+              }
             }
 
           case _ ⇒

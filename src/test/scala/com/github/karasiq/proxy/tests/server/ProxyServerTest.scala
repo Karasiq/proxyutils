@@ -46,7 +46,7 @@ class ProxyServerTest extends FlatSpec with Matchers with BeforeAndAfterAll {
   }
 
   "Proxy server" should "accept HTTP CONNECT" in {
-    testServer(HttpRequest((HttpMethod.CONNECT, "http://example.com", Nil)), ProxyConnectionRequest("http", InetSocketAddress.createUnresolved("example.com", 80)))
+    testServer(HttpRequest((HttpMethod.CONNECT, "http://example.com", Nil)), ProxyConnectionRequest("https", InetSocketAddress.createUnresolved("example.com", 80)))
   }
 
   it should "fail on plain HTTP" in {

@@ -14,6 +14,9 @@ object ProxyConnectionRequest {
   def successResponse(request: ProxyConnectionRequest): ByteString = {
     request.scheme match {
       case "http" ⇒
+        ByteString.empty
+
+      case "https" ⇒
         HttpResponse((HttpStatus(200, "Connection established"), Nil))
 
       case "socks" ⇒
@@ -29,7 +32,7 @@ object ProxyConnectionRequest {
 
   def failureResponse(request: ProxyConnectionRequest): ByteString = {
     request.scheme match {
-      case "http" ⇒
+      case "http" | "https" ⇒
         HttpResponse((HttpStatus(400, "Bad Request"), Nil))
 
       case "socks" ⇒
