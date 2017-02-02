@@ -20,6 +20,7 @@ import com.typesafe.config.ConfigFactory
 import org.scalatest.tags.Network
 import org.scalatest.{BeforeAndAfterAll, FlatSpec, Matchers}
 
+import scala.collection.JavaConverters._
 import scala.concurrent.Future
 import scala.language.postfixOps
 
@@ -40,10 +41,9 @@ class ProxyChainTest extends FlatSpec with Matchers with BeforeAndAfterAll {
   val testProxies: List[Proxy] = {
     import com.karasiq.networkutils.uri._
 
-    import scala.collection.JavaConversions._
-
-    config.getStringList("proxies").toList
+    config.getStringList("proxies").asScala
       .map(url ⇒ Proxy(url))
+      .toList
   }
 
   def tlsContext: HttpsConnectionContext = {

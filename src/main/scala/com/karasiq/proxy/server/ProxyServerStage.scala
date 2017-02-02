@@ -23,8 +23,8 @@ object ProxyServer {
     Flow.fromGraph(GraphDSL.create(new ProxyServerStage) { implicit builder ⇒ stage ⇒
       import GraphDSL.Implicits._
       val tlsInbound = builder.add(Flow[SslTlsInbound].collect { case SessionBytes(_, bytes) ⇒ bytes })
-      val tlsOutbound = builder.add(Flow[ByteString].map(SendBytes(_)))
-      val tls = builder.add(TLS(tlsContext.sslContext, tlsContext.firstSession, TLSRole.server, TLSClosing.eagerClose))
+      val tlsOutbound = builder.add(Flow[ByteString].map(SendBytes))
+      val tls = builder.add(TLS(tlsContext.sslContext, tlsContext.firstSession, TLSRole.server))
       tls.out2 ~> tlsInbound ~> stage
       stage ~> tlsOutbound ~> tls.in1
       FlowShape(tls.in2, tls.out1)

@@ -9,7 +9,7 @@ import akka.http.scaladsl.HttpsConnectionContext
 import akka.io.Tcp.SO
 import akka.stream.TLSProtocol.{SendBytes, SessionBytes, SslTlsInbound}
 import akka.stream.scaladsl.{BidiFlow, Flow, GraphDSL, Keep, TLS, Tcp}
-import akka.stream.{BidiShape, FlowShape, TLSRole}
+import akka.stream.{BidiShape, FlowShape, TLSClosing, TLSRole}
 import akka.util.ByteString
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.socks.SocksClient.SocksVersion
@@ -17,6 +17,7 @@ import com.karasiq.proxy.client.{HttpProxyClientStage, SocksProxyClientStage}
 import com.typesafe.config.{Config, ConfigException}
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.language.{implicitConversions, postfixOps}
@@ -43,7 +44,7 @@ object ProxyChain {
 
     BidiFlow.fromGraph {
       if (proxy.scheme.startsWith("tls-") && tlsContext.nonEmpty) {
-        val tls = TLS(tlsContext.get.sslContext, tlsContext.get.firstSession, TLSRole.client, hostInfo = Some(proxy.host → proxy.port))
+        val tls = TLS(tlsContext.get.sslContext, tlsContext.get.firstSession, TLSRole.client, TLSClosing.ignoreComplete, Some(proxy.host → proxy.port))
         BidiFlow.fromGraph(GraphDSL.create(stageForScheme(proxy.scheme.split("tls-", 2).last), tls)(Keep.left) { implicit builder ⇒ (connection, tls) ⇒
           import GraphDSL.Implicits._
           val bytesIn = builder.add(Flow[SslTlsInbound].collect { case SessionBytes(_, bytes) ⇒ bytes })
@@ -104,8 +105,7 @@ object ProxyChain {
   }
 
   private def configSelect(config: Config): Seq[Proxy] = {
-    import scala.collection.JavaConversions._
-    val proxies: IndexedSeq[String] = config.getStringList("proxies").toIndexedSeq
+    val proxies = config.getStringList("proxies").asScala
     select(proxies.map(s ⇒ Proxy(if (s.contains("://")) s else s"http://$s")), config.getBoolean("randomize"), config.getInt("hops"))
   }
 
