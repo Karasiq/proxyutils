@@ -6,28 +6,28 @@ version := "2.0.10"
 
 isSnapshot := version.value.endsWith("SNAPSHOT")
 
-scalaVersion := "2.12.1"
+scalaVersion := "2.12.3"
 
-crossScalaVersions := Seq("2.11.8", "2.12.1")
+crossScalaVersions := Seq("2.11.11", "2.12.3")
 
 resolvers += "softprops-maven" at "http://dl.bintray.com/content/softprops/maven"
 
-resolvers += Resolver.sonatypeRepo("snapshots")
+// resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies ++= {
-  val akkaV = "2.4.16"
-  val akkaHttpV = "10.0.1"
+  val akkaV = "2.5.4"
+  val akkaHttpV = "10.0.10"
   Seq(
     "commons-io" % "commons-io" % "2.5",
-    "org.apache.httpcomponents" % "httpclient" % "4.3.3",
+    "org.apache.httpcomponents" % "httpclient" % "4.5.3",
     "com.typesafe.akka" %% "akka-actor" % akkaV,
     "com.typesafe.akka" %% "akka-stream" % akkaV,
     "com.typesafe.akka" %% "akka-http" % akkaHttpV,
     "com.typesafe.akka" %% "akka-testkit" % akkaV % "test",
     "com.typesafe.akka" %% "akka-stream-testkit" % akkaV % "test",
-    "com.github.karasiq" %% "commons-akka" % "1.0.5",
-    "com.github.karasiq" %% "cryptoutils" % "1.4.2",
-    "org.scalatest" %% "scalatest" % "3.0.1" % "test"
+    "com.github.karasiq" %% "commons-akka" % "1.0.7",
+    "com.github.karasiq" %% "cryptoutils" % "1.4.3",
+    "org.scalatest" %% "scalatest" % "3.0.4" % "test"
   )
 }
 
