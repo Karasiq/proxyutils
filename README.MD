@@ -2,4 +2,5 @@
 Scala HTTP/SOCKS proxy library, based on akka-streams.
 
 
-
+# Example usage
+See https://github.com/Karasiq/proxychain/blob/dd7189782c12fb60628b0c945b43cc4330eb5cdd/src/main/scala/com/karasiq/proxychain/app/Boot.scala#L64-L68
