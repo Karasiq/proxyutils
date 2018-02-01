@@ -21,6 +21,10 @@ import com.karasiq.proxy.ProxyException
 import com.karasiq.proxy.server.{ProxyConnectionRequest, ProxyServer}
 
 class ProxyServerTest extends ActorSpec with FlatSpecLike  {
+  "Proxy server" should "accept HTTP CONNECT" in {
+    HttpRequest((HttpMethod.CONNECT, "http://example.com", Nil)) should parseTo(ProxyConnectionRequest("https", InetSocketAddress.createUnresolved("example.com", 80)))
+  }
+
   it should "fail on plain HTTP" in {
     val expectedAnswer = HttpResponse(HttpStatus(400, "Bad Request"), Nil) ++ ByteString("Request not supported")
     val (future, probe) = Source.single(HttpRequest((HttpMethod.GET, "/", Nil)))
@@ -38,10 +42,6 @@ class ProxyServerTest extends ActorSpec with FlatSpecLike  {
 
   it should "accept SOCKS4" in {
     ConnectionRequest((SocksV4, SocksClient.Command.TcpConnection, InetSocketAddress.createUnresolved("example.com", 80), "")) should parseTo(ProxyConnectionRequest("socks4", InetSocketAddress.createUnresolved("example.com", 80)))
-  }
-
-  "Proxy server" should "accept HTTP CONNECT" in {
-    HttpRequest((HttpMethod.CONNECT, "http://example.com", Nil)) should parseTo(ProxyConnectionRequest("https", InetSocketAddress.createUnresolved("example.com", 80)))
   }
 
   private[this] def parseTo(expect: ProxyConnectionRequest) = {
