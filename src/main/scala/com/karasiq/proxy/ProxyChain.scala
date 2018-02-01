@@ -27,9 +27,8 @@ import com.karasiq.proxy.client.{HttpProxyClientStage, SocksProxyClientStage}
 object ProxyChain {
   private[proxy] val TlsPrefix = "tls-"
 
-  private[proxy] def proxyStage(address: InetSocketAddress, proxy: Proxy,
-                         tlsContext: Option[HttpsConnectionContext] = None)
-                        (implicit as: ActorSystem): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
+  private[proxy] def proxyStage(address: InetSocketAddress, proxy: Proxy, tlsContext: Option[HttpsConnectionContext] = None)
+                               (implicit as: ActorSystem): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[Done]] = {
     val log = Logging(as, "ProxyStage")
     def stageForScheme(scheme: String) = {
       scheme.toLowerCase match {
