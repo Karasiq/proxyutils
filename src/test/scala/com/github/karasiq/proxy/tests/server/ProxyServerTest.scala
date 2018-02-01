@@ -22,7 +22,7 @@ import com.karasiq.proxy.server.{ProxyConnectionRequest, ProxyServer}
 
 class ProxyServerTest extends ActorSpec with FlatSpecLike  {
   "Proxy server" should "accept HTTP CONNECT" in {
-    HttpRequest((HttpMethod.CONNECT, "http://example.com", Nil)) should parseTo(ProxyConnectionRequest("https", InetSocketAddress.createUnresolved("example.com", 80)))
+    HttpRequest((HttpMethod.CONNECT, "http://example.com", Nil)) should beAcceptedAs(ProxyConnectionRequest("https", InetSocketAddress.createUnresolved("example.com", 80)))
   }
 
   it should "fail on plain HTTP" in {
@@ -37,14 +37,14 @@ class ProxyServerTest extends ActorSpec with FlatSpecLike  {
   }
 
   it should "accept SOCKS5" in {
-    ConnectionRequest((SocksV5, SocksClient.Command.TcpConnection, InetSocketAddress.createUnresolved("example.com", 80), "")) should parseTo(ProxyConnectionRequest("socks", InetSocketAddress.createUnresolved("example.com", 80)))
+    ConnectionRequest((SocksV5, SocksClient.Command.TcpConnection, InetSocketAddress.createUnresolved("example.com", 80), "")) should beAcceptedAs(ProxyConnectionRequest("socks", InetSocketAddress.createUnresolved("example.com", 80)))
   }
 
   it should "accept SOCKS4" in {
-    ConnectionRequest((SocksV4, SocksClient.Command.TcpConnection, InetSocketAddress.createUnresolved("example.com", 80), "")) should parseTo(ProxyConnectionRequest("socks4", InetSocketAddress.createUnresolved("example.com", 80)))
+    ConnectionRequest((SocksV4, SocksClient.Command.TcpConnection, InetSocketAddress.createUnresolved("example.com", 80), "")) should beAcceptedAs(ProxyConnectionRequest("socks4", InetSocketAddress.createUnresolved("example.com", 80)))
   }
 
-  private[this] def parseTo(expect: ProxyConnectionRequest) = {
+  private[this] def beAcceptedAs(expect: ProxyConnectionRequest) = {
     equal(expect).matcher[ProxyConnectionRequest].compose { (request: ByteString) ⇒
       val testIn = ByteString("Test bytes sent to server")
       val testOut = ByteString("Test bytes sent to client")
