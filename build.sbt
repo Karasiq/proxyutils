@@ -2,7 +2,7 @@ val projectName = "proxyutils"
 
 lazy val commonSettings = Seq(
   organization := "com.github.karasiq",
-  version := "2.0.11-SNAPSHOT",
+  version := "2.0.11",
   isSnapshot := version.value.endsWith("SNAPSHOT"),
   scalaVersion := "2.12.3",
   crossScalaVersions := Seq("2.11.11", scalaVersion.value),
