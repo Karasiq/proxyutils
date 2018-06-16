@@ -5,7 +5,7 @@ import com.karasiq.networkutils.http.headers.HttpHeader
 import com.karasiq.parsers.{ByteFragment, RegexByteExtractor}
 
 object HttpMethod extends Enumeration {
-  val GET, POST, PUT, PATCH, DELETE, CONNECT, OPTIONS = Value
+  val GET, HEAD, POST, PUT, PATCH, DELETE, CONNECT, OPTIONS, TRACE = Value
 }
 
 object HttpRequest extends ByteFragment[(HttpMethod.Value, String, Seq[HttpHeader])] {

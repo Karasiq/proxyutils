@@ -186,7 +186,7 @@ private[proxy] final class ProxyServerStage extends GraphStageWithMaterializedVa
             } else {
               if (method != HttpMethod.CONNECT) {
                 // Replicate request
-                val path = Option(URLParser.withDefaultProtocol(url).getPath).filter(_.nonEmpty).getOrElse("/")
+                val path = Option(URLParser.withDefaultProtocol(url).getFile).filter(_.nonEmpty).getOrElse("/")
                 val request = HttpRequest((method, path, headers))
                 buffer = request ++ buffer
                 emitRequest(ProxyConnectionRequest("http", address))
