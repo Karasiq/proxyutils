@@ -3,8 +3,9 @@ package com.karasiq.parsers.socks.internal
 import java.net.{InetAddress, InetSocketAddress}
 
 import akka.util.ByteString
-import com.karasiq.parsers.socks.SocksClient.SocksVersion
+
 import com.karasiq.parsers.{ByteFragment, ByteRange}
+import com.karasiq.parsers.socks.SocksClient.SocksVersion
 
 private[socks] object Address {
   sealed trait AddressType {
@@ -63,7 +64,7 @@ private[socks] object Address {
 
   object V4 extends ByteFragment[InetSocketAddress] {
     override def toBytes(address: InetSocketAddress): ByteString = {
-      IPv4(InetAddress.getByName(address.getHostString)) ++ Port(address.getPort)
+      Port(address.getPort) ++ IPv4(InetAddress.getByName(address.getHostString))
     }
 
     override def fromBytes: Extractor = {
