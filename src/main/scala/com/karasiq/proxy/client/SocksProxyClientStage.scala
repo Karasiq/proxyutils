@@ -2,17 +2,18 @@ package com.karasiq.proxy.client
 
 import java.net.InetSocketAddress
 
+import scala.concurrent.{Future, Promise}
+
 import akka.Done
 import akka.event.LoggingAdapter
 import akka.stream._
 import akka.stream.stage._
 import akka.util.ByteString
+
 import com.karasiq.networkutils.proxy.Proxy
 import com.karasiq.parsers.socks.SocksClient.{AuthMethod, _}
 import com.karasiq.parsers.socks.SocksServer.{AuthMethodResponse, AuthStatusResponse, Codes, ConnectionStatusResponse}
 import com.karasiq.proxy.ProxyException
-
-import scala.concurrent.{Future, Promise}
 
 final class SocksProxyClientStage(log: LoggingAdapter, destination: InetSocketAddress, version: SocksVersion = SocksVersion.SocksV5, proxy: Option[Proxy] = None) extends GraphStageWithMaterializedValue[BidiShape[ByteString, ByteString, ByteString, ByteString], Future[Done]] {
   val input = Inlet[ByteString]("SocksProxyClient.tcpIn")
@@ -53,7 +54,13 @@ final class SocksProxyClientStage(log: LoggingAdapter, destination: InetSocketAd
       def sendAuthMethodRequest(): Unit = {
         stage = Stage.AuthMethod
         log.debug("Requesting available auth methods from SOCKS proxy: {}", proxyString)
-        emit(output, AuthRequest(Seq(AuthMethod.NoAuth, AuthMethod.UsernamePassword)), () ⇒ pull(input))
+
+        val authMethods = if (proxy.exists(_.userInfo.isDefined))
+          Seq(AuthMethod.NoAuth, AuthMethod.UsernamePassword)
+        else
+          Seq(AuthMethod.NoAuth)
+
+        emit(output, AuthRequest(authMethods), () ⇒ pull(input))
       }
 
       def sendAuthRequest(): Unit = {

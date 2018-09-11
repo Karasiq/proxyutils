@@ -2,13 +2,14 @@ package com.karasiq.parsers.socks
 
 import java.net.InetSocketAddress
 
-import akka.util.ByteString
-import com.karasiq.parsers.socks.SocksClient.SocksVersion.SocksV5
-import com.karasiq.parsers.socks.SocksClient.{AuthMethod, SocksVersion}
-import com.karasiq.parsers.socks.internal.Address
-import com.karasiq.parsers.{ByteFragment, ParserException}
-
 import scala.language.implicitConversions
+
+import akka.util.ByteString
+
+import com.karasiq.parsers.{ByteFragment, ParserException}
+import com.karasiq.parsers.socks.SocksClient.{AuthMethod, SocksVersion}
+import com.karasiq.parsers.socks.SocksClient.SocksVersion.SocksV5
+import com.karasiq.parsers.socks.internal.Address
 
 /**
  * Serializers for SOCKS server
@@ -42,7 +43,7 @@ object SocksServer {
    */
   object AuthStatusResponse extends ByteFragment[Byte] {
     override def fromBytes: Extractor = {
-      case SocksVersion(SocksVersion.SocksV5) +: statusCode +: rest ⇒
+      case _ +: statusCode +: rest ⇒
         statusCode → rest
     }
 
